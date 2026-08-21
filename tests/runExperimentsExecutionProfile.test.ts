@@ -2,7 +2,7 @@ import path from "node:path";
 import { tmpdir } from "node:os";
 import { createHash } from "node:crypto";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { chmod, mkdtemp, mkdir, readFile, utimes, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, readFile, utimes, writeFile } from "node:fs/promises";
 
 import { InMemoryEventStream } from "../src/core/events.js";
 import { MockLLMClient } from "../src/core/llm/client.js";
@@ -65,21 +65,9 @@ vi.mock("../src/core/runs/topicProbeExecutionAuthorizationGate.js", async (impor
 });
 
 const ORIGINAL_CWD = process.cwd();
-const ORIGINAL_DOCKER_SECRET_FILE = process.env.AUTOLABOS_DOCKER_SECRET_FILE;
-const ORIGINAL_DOCKER_IMAGE = process.env.AUTOLABOS_DOCKER_IMAGE;
 
 afterEach(() => {
   process.chdir(ORIGINAL_CWD);
-  if (ORIGINAL_DOCKER_SECRET_FILE === undefined) {
-    delete process.env.AUTOLABOS_DOCKER_SECRET_FILE;
-  } else {
-    process.env.AUTOLABOS_DOCKER_SECRET_FILE = ORIGINAL_DOCKER_SECRET_FILE;
-  }
-  if (ORIGINAL_DOCKER_IMAGE === undefined) {
-    delete process.env.AUTOLABOS_DOCKER_IMAGE;
-  } else {
-    process.env.AUTOLABOS_DOCKER_IMAGE = ORIGINAL_DOCKER_IMAGE;
-  }
 });
 
 function makeRun(runId: string): RunRecord {
@@ -789,25 +777,18 @@ describe("run_experiments execution profile behavior", () => {
         "parser = argparse.ArgumentParser()",
         "parser.add_argument('--output-dir')",
         "parser.add_argument('--metrics-path')",
-        "parser.add_argument('--env-file')",
         "parser.add_argument('--overwrite-output', action='store_true')",
         "parser.parse_args()"
       ].join("\n"),
       "utf8"
     );
-    await writeFile(path.join(publicDir, "package-lock.json"), "{}\n", "utf8");
     await writeFile(path.join(publicDir, "study_results.json"), JSON.stringify({ status: "previous" }), "utf8");
-    const scopedSecret = path.join(tmpdir(), `autolabos-run-secret-${run.id}.env`);
-    await writeFile(scopedSecret, "PROVIDER_KEY=test-only\n", "utf8");
-    await chmod(scopedSecret, 0o600);
-    process.env.AUTOLABOS_DOCKER_SECRET_FILE = scopedSecret;
-    process.env.AUTOLABOS_DOCKER_IMAGE = `sha256:${"b".repeat(64)}`;
 
     const metricsPath = path.join(runDir, "metrics.json");
     const runContext = new RunContextMemory(path.join(runDir, "memory", "run_context.json"));
     await runContext.put(
       "implement_experiments.run_command",
-      `python3 ${JSON.stringify(scriptPath)} --env-file /run/secrets/autolabos.env --output-dir ${JSON.stringify(publicDir)} --metrics-path ${JSON.stringify(metricsPath)}`
+      `python3 ${JSON.stringify(scriptPath)} --output-dir ${JSON.stringify(publicDir)} --metrics-path ${JSON.stringify(metricsPath)}`
     );
     await runContext.put("implement_experiments.cwd", publicDir);
     await runContext.put("implement_experiments.public_dir", publicDir);
@@ -841,13 +822,8 @@ describe("run_experiments execution profile behavior", () => {
     };
 
     const node = createRunExperimentsNode({
-      config: {
-        experiments: {
-          network_policy: "required",
-          network_purpose: "remote_inference"
-        }
-      } as any,
-      executionProfile: "docker",
+      config: {} as any,
+      executionProfile: "local",
       runStore: {} as any,
       eventStream: new InMemoryEventStream(),
       llm: new MockLLMClient(),
@@ -867,44 +843,6 @@ describe("run_experiments execution profile behavior", () => {
     expect(result.status, JSON.stringify(result)).toBe("success");
     expect(aci.runCommand).toHaveBeenCalledTimes(1);
     expect(aci.runTests).not.toHaveBeenCalled();
-    const envelope = JSON.parse(
-      await readFile(path.join(runDir, "execution", "execution_envelope.json"), "utf8")
-    ) as Record<string, any>;
-    const receipt = JSON.parse(
-      await readFile(path.join(runDir, "execution", "execution_receipt.json"), "utf8")
-    ) as Record<string, any>;
-    expect(envelope.input_artifacts).toEqual(expect.arrayContaining([
-      expect.objectContaining({ path: "outputs/public-runner/run_condition_sweep.py" })
-    ]));
-    expect(envelope.dependency_artifacts).toEqual(expect.arrayContaining([
-      expect.objectContaining({ path: "outputs/public-runner/package-lock.json" })
-    ]));
-    expect(envelope.devices).toEqual({
-      policy: "cpu_only",
-      requested_gpu_count: 0,
-      visible_device_ids: []
-    });
-    expect(envelope.container_image).toBe(`sha256:${"b".repeat(64)}`);
-    expect(envelope.secret_files).toEqual([{
-      target_path: "/run/secrets/autolabos.env",
-      required: true
-    }]);
-    expect(receipt).toMatchObject({
-      status: "completed",
-      enforcement: "compatibility",
-      paper_grade_eligible: false,
-      required_outputs_present: true
-    });
-    expect(receipt.output_artifacts).toEqual(expect.arrayContaining([
-      expect.objectContaining({
-        path: `.autolabos/runs/${run.id}/metrics.json`,
-        required: true
-      })
-    ]));
-    expect(JSON.stringify(envelope)).not.toContain(root);
-    expect(JSON.stringify(envelope)).not.toContain(scopedSecret);
-    expect(JSON.stringify(envelope)).not.toContain("test-only");
-    expect(JSON.stringify(receipt)).not.toContain(root);
   });
 
   it("blocks long-running generated runners that lack progress or partial metrics artifacts", async () => {
@@ -7322,17 +7260,6 @@ describe("run_experiments topic-probe compute governance", () => {
     expect(ledgerLines[1].usage_evidence_sha256).toBe(
       createHash("sha256").update(storedEvidenceBytes).digest("hex")
     );
-    const executionEnvelope = JSON.parse(
-      await readFile(
-        path.join(runDir, "execution", "execution_envelope.json"),
-        "utf8"
-      )
-    );
-    expect(executionEnvelope.devices).toEqual({
-      policy: "nvidia_gpu",
-      requested_gpu_count: 1,
-      visible_device_ids: []
-    });
     const evidenceReceipt = JSON.parse(
       await readFile(
         path.join(runDir, "evidence_adequacy_execution_receipt.json"),

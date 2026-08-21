@@ -53,8 +53,6 @@ describe("runMetaHarness", () => {
     expect(task).toContain("scientific_validation.json");
     expect(task).toContain("compile_report.json");
     expect(task).toContain("동결된 evidence contract");
-    expect(task).toContain("단일 점수나 paper_readiness.overall_score를 직접 최적화하지 마세요");
-    expect(task).toContain("research_process check");
     expect(task).not.toContain("seed 반복 부재");
     expect(task).not.toContain("smoke-test 수준 train budget");
     const promptTargetMap = JSON.parse(await fs.readFile(path.join(result.contextDir, "prompt_target_map.json"), "utf8")) as {
@@ -62,12 +60,6 @@ describe("runMetaHarness", () => {
     };
     expect(promptTargetMap.targets).toEqual(
       expect.arrayContaining([
-        expect.objectContaining({
-          source_artifact: "run_status.json",
-          target_node: "analyze_results",
-          recommended_prompt_node: "analyze_results",
-          diagnostic_ids: expect.arrayContaining(["hypothesis_disposition", "hypothesis_disposition_not_explicit"])
-        }),
         expect.objectContaining({
           target_node: "run_experiments",
           recommended_prompt_node: "design_experiments",
@@ -109,7 +101,6 @@ describe("runMetaHarness", () => {
     );
     await expect(fs.stat(path.join(result.contextDir, "node-prompts", "design_experiments.md"))).resolves.toBeTruthy();
     await expect(fs.stat(path.join(result.contextDir, "runs", "run-1", "paper_readiness.json"))).resolves.toBeTruthy();
-    await expect(fs.stat(path.join(result.contextDir, "runs", "run-1", "run_status.json"))).resolves.toBeTruthy();
     await expect(fs.stat(path.join(result.contextDir, "runs", "run-1", "manuscript_quality_gate.json"))).resolves.toBeTruthy();
     await expect(fs.stat(path.join(result.contextDir, "runs", "run-1", "scientific_validation.json"))).resolves.toBeTruthy();
     await expect(fs.stat(path.join(result.contextDir, "runs", "run-1", "compile_report.json"))).resolves.toBeTruthy();
@@ -704,25 +695,6 @@ async function createWorkspaceWithCompletedRun(): Promise<string> {
     "utf8"
   );
   await fs.writeFile(path.join(runRoot, "result_analysis.json"), JSON.stringify({ summary: "analysis" }, null, 2), "utf8");
-  await fs.writeFile(
-    path.join(runRoot, "run_status.json"),
-    JSON.stringify({
-      version: 1,
-      run_id: "run-1",
-      research_process: {
-        version: 1,
-        status: "blocked",
-        checks: [{
-          id: "hypothesis_disposition",
-          status: "fail",
-          required: true,
-          reason_codes: ["hypothesis_disposition_not_explicit"],
-          artifact_refs: [{ label: "Result analysis", path: "result_analysis.json" }]
-        }]
-      }
-    }, null, 2),
-    "utf8"
-  );
   await fs.writeFile(path.join(runRoot, "review", "decision.json"), JSON.stringify({ outcome: "revise" }, null, 2), "utf8");
   await fs.writeFile(path.join(runRoot, "review", "minimum_gate.json"), JSON.stringify({ passed: false }, null, 2), "utf8");
   await fs.writeFile(

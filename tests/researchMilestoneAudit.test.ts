@@ -43,8 +43,7 @@ describe("research milestone audit", () => {
             { pointer: "/status", operator: "equals", expected: "accepted" },
             { pointer: "/score", operator: "gte", expected: 0.9 },
             { pointer: "/findings", operator: "min_items", expected: 2 },
-            { pointer: "/findings", operator: "contains", expected: "traceable" },
-            { pointer: "/status", operator: "one_of", expected: ["accepted", "rejected"] }
+            { pointer: "/findings", operator: "contains", expected: "traceable" }
           ]
         }]
       }]
@@ -64,7 +63,6 @@ describe("research milestone audit", () => {
       failed_requirement_count: 0
     });
     expect(result.report.requirements[0]?.evidence[0]?.assertions.every((item) => item.passed)).toBe(true);
-    expect(result.report.requirements[0]?.evidence[0]?.assertions[2]?.actual).toBe(2);
     expect(await readFile(path.join(workspace, result.summary_path), "utf8")).toContain("Verdict: achieved");
   });
 
@@ -226,16 +224,6 @@ describe("research milestone audit", () => {
           sha256: null,
           assertions: [{ pointer: "/score", operator: "gte", expected: "high" }]
         }]
-      }, {
-        id: "invalid_one_of",
-        label: "Invalid terminal alternatives",
-        target_node: "review",
-        required: true,
-        evidence: [{
-          path: "evidence/report.json",
-          sha256: null,
-          assertions: [{ pointer: "/status", operator: "one_of", expected: [] }]
-        }]
       }]
     });
     const invalid = await verifyResearchMilestone({
@@ -248,8 +236,7 @@ describe("research milestone audit", () => {
       "contract_requirement_id_invalid:0",
       "contract_requirement_must_be_required:0",
       "contract_requirement_evidence_invalid:0",
-      "contract_assertion_expected_invalid:1:0:0",
-      "contract_assertion_expected_invalid:2:0:0"
+      "contract_assertion_expected_invalid:1:0:0"
     ]));
   });
 });

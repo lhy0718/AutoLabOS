@@ -2,13 +2,12 @@ import path from "node:path";
 import os from "node:os";
 import { mkdtempSync, rmSync } from "node:fs";
 import { promises as nodeFs } from "node:fs";
-import { access, chmod, mkdir, utimes, writeFile } from "node:fs/promises";
+import { chmod, mkdir, writeFile } from "node:fs/promises";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import * as doctorModule from "../src/core/doctor.js";
 import { buildGuidedResearchBriefMarkdown } from "../src/core/runs/researchBriefFiles.js";
-import { PROMOTION_SOURCE_LOCK_FILENAME } from "../src/core/runs/topicProbePromotionSourceLock.js";
 import { CodexNativeClient } from "../src/integrations/codex/codexCliClient.js";
 
 const tempDirs: string[] = [];
@@ -23,56 +22,6 @@ afterEach(() => {
 });
 
 describe("runDoctorReport", () => {
-  it("warns without blocking for a fresh active promotion source lock", async () => {
-    const workspace = createTempWorkspace("autolabos-doctor-active-promotion-lock-");
-    await seedDoctorTooling(workspace);
-    await seedDoctorWorkspace(workspace);
-    const lockPath = await seedPromotionSourceLock(workspace, "run-active", "active-secret");
-
-    const report = await withWorkspacePath(workspace, () =>
-      doctorModule.runDoctorReport(createCodexStub(), {
-        workspaceRoot: workspace,
-        includeHarnessValidation: false
-      })
-    );
-
-    const lockCheck = report.checks.find((check) => check.name === "promotion-source-locks");
-    expect(report.readiness.blocked).toBe(false);
-    expect(report.readiness.warningChecks).toContain("promotion-source-locks");
-    expect(lockCheck).toEqual(expect.objectContaining({ status: "warning", ok: true }));
-    expect(lockCheck?.detail).toContain(`pid=${process.pid}`);
-    expect(lockCheck?.detail).not.toContain("active-secret");
-    expect(doctorModule.buildDoctorHighlightLines(report)).toEqual(
-      expect.arrayContaining([expect.stringContaining("promotion source locks")])
-    );
-    await expect(access(lockPath)).resolves.toBeUndefined();
-  });
-
-  it("blocks readiness for a stale promotion source lock without deleting it", async () => {
-    const workspace = createTempWorkspace("autolabos-doctor-stale-promotion-lock-");
-    await seedDoctorTooling(workspace);
-    await seedDoctorWorkspace(workspace);
-    const lockPath = await seedPromotionSourceLock(workspace, "run-stale", "stale-secret");
-    const oldTimestamp = new Date(Date.now() - 5 * 60 * 1000);
-    await utimes(lockPath, oldTimestamp, oldTimestamp);
-
-    const report = await withWorkspacePath(workspace, () =>
-      doctorModule.runDoctorReport(createCodexStub(), {
-        workspaceRoot: workspace,
-        includeHarnessValidation: false
-      })
-    );
-
-    const lockCheck = report.checks.find((check) => check.name === "promotion-source-locks");
-    expect(report.readiness.blocked).toBe(true);
-    expect(report.readiness.failedChecks).toContain("promotion-source-locks");
-    expect(lockCheck).toEqual(expect.objectContaining({ status: "fail", ok: false }));
-    expect(lockCheck?.detail).toContain("status=stale");
-    expect(lockCheck?.detail).toContain("Automatic deletion is disabled");
-    expect(lockCheck?.detail).not.toContain("stale-secret");
-    await expect(access(lockPath)).resolves.toBeUndefined();
-  });
-
   it("parses only the explicit live-provider doctor option", () => {
     expect(doctorModule.parseDoctorCommandArgs([])).toEqual({ liveProvider: false });
     expect(doctorModule.parseDoctorCommandArgs(["--live-provider"])).toEqual({ liveProvider: true });
@@ -341,9 +290,6 @@ describe("runDoctorReport", () => {
     await seedDoctorWorkspace(workspace);
     await writeFile(path.join(workspace, "ISSUES.md"), VALID_ISSUE_MARKDOWN, "utf8");
     await writeJson(path.join(workspace, ".autolabos", "runs", "runs.json"), { runs: [] });
-    const dockerExecutable = await seedDockerInspectFixture(workspace, {
-      networkMode: "none"
-    });
 
     const report = await withWorkspacePath(workspace, () =>
       doctorModule.runDoctorReport(createCodexStub(), {
@@ -354,9 +300,7 @@ describe("runDoctorReport", () => {
         dependencyMode: "docker",
         sessionMode: "existing",
         codeExecutionExpected: true,
-        candidateIsolation: "attempt_worktree",
-        dockerExecutable,
-        dockerTarget: "runtime-container"
+        candidateIsolation: "attempt_worktree"
       })
     );
 
@@ -372,102 +316,6 @@ describe("runDoctorReport", () => {
         ok: true
       })
     );
-    expect(report.checks).toContainEqual(
-      expect.objectContaining({
-        name: "docker-execution-boundary",
-        ok: true
-      })
-    );
-    expect(report.checks).toContainEqual(
-      expect.objectContaining({
-        name: "experiment-containerization",
-        ok: true
-      })
-    );
-  });
-
-  it("blocks Docker readiness when the configured target cannot be inspected", async () => {
-    const workspace = createTempWorkspace("autolabos-doctor-docker-unavailable-");
-    await seedDoctorTooling(workspace);
-    await seedDoctorWorkspace(workspace);
-    await writeFile(path.join(workspace, "ISSUES.md"), VALID_ISSUE_MARKDOWN, "utf8");
-    await writeJson(path.join(workspace, ".autolabos", "runs", "runs.json"), { runs: [] });
-
-    const report = await withWorkspacePath(workspace, () =>
-      doctorModule.runDoctorReport(createCodexStub(), {
-        workspaceRoot: workspace,
-        includeHarnessValidation: false,
-        dependencyMode: "docker",
-        codeExecutionExpected: true,
-        dockerExecutable: path.join(workspace, "missing-docker"),
-        dockerTarget: "runtime-container"
-      })
-    );
-
-    expect(report.readiness.blocked).toBe(true);
-    expect(report.readiness.failedChecks).toEqual(expect.arrayContaining([
-      "docker-execution-boundary",
-      "experiment-containerization"
-    ]));
-    expect(report.checks).toContainEqual(
-      expect.objectContaining({
-        name: "docker-execution-boundary",
-        ok: false,
-        detail: expect.stringContaining("docker_container_inspect_failed")
-      })
-    );
-  });
-
-  it("validates an image-backed ephemeral Docker lifecycle before declaring readiness", async () => {
-    const workspace = createTempWorkspace("autolabos-doctor-docker-image-");
-    await seedDoctorTooling(workspace);
-    await seedDoctorWorkspace(workspace);
-    await writeFile(path.join(workspace, "ISSUES.md"), VALID_ISSUE_MARKDOWN, "utf8");
-    await writeJson(path.join(workspace, ".autolabos", "runs", "runs.json"), { runs: [] });
-    const dockerExecutable = await seedEphemeralDockerFixture(workspace);
-
-    const report = await withWorkspacePath(workspace, () =>
-      doctorModule.runDoctorReport(createCodexStub(), {
-        workspaceRoot: workspace,
-        includeHarnessValidation: false,
-        executionApprovalMode: "risk_ack",
-        dependencyMode: "docker",
-        codeExecutionExpected: true,
-        networkPolicy: "blocked",
-        dockerExecutable,
-        dockerImage: "research-runtime:test"
-      })
-    );
-
-    expect(report.readiness.blocked).toBe(false);
-    expect(report.checks).toContainEqual(
-      expect.objectContaining({
-        name: "docker-execution-boundary",
-        ok: true,
-        detail: expect.stringContaining("ephemeral create")
-      })
-    );
-    expect(report.checks).toContainEqual(
-      expect.objectContaining({
-        name: "experiment-containerization",
-        ok: true
-      })
-    );
-  });
-
-  it("reports an invalid Docker image reference as a failed readiness check", async () => {
-    const result = await doctorModule.runDockerExecutionBoundaryCheck({
-      workspaceRoot: "/workspace/project",
-      networkPolicy: "blocked",
-      dockerImage: "--privileged"
-    });
-
-    expect(result).toEqual(expect.objectContaining({
-      name: "docker-execution-boundary",
-      ok: false,
-      status: "fail",
-      detail: expect.stringContaining("docker_execution_image_invalid")
-    }));
   });
 
   it("treats local snapshot isolation plus disabled network as ready for code execution", async () => {
@@ -550,7 +398,7 @@ describe("runDoctorReport", () => {
     );
   });
 
-  it("keeps required remote execution blocked without an enforced adapter while surfacing network guidance", async () => {
+  it("surfaces required networked execution as a stronger warning with explicit highlight guidance", async () => {
     const workspace = createTempWorkspace("autolabos-doctor-network-required-");
     await seedDoctorTooling(workspace);
     await seedDoctorWorkspace(workspace);
@@ -573,8 +421,7 @@ describe("runDoctorReport", () => {
       })
     );
 
-    expect(report.readiness.blocked).toBe(true);
-    expect(report.readiness.failedChecks).toContain("experiment-containerization");
+    expect(report.readiness.blocked).toBe(false);
     expect(report.readiness.networkPolicy).toBe("required");
     expect(report.readiness.networkPurpose).toBe("remote_inference");
     expect(report.readiness.warningChecks).toContain("experiment-web-restriction");
@@ -584,13 +431,6 @@ describe("runDoctorReport", () => {
         ok: true,
         status: "warning",
         detail: expect.stringContaining("network-critical dependency for remote_inference")
-      })
-    );
-    expect(report.checks).toContainEqual(
-      expect.objectContaining({
-        name: "experiment-containerization",
-        ok: false,
-        detail: expect.stringContaining("no enforced execution adapter")
       })
     );
     expect(doctorModule.buildDoctorHighlightLines(report)).toContain(
@@ -889,110 +729,9 @@ async function seedDoctorWorkspace(workspace: string): Promise<void> {
   await writeFile(path.join(workspace, ".autolabos", "config.yaml"), "version: 1\n", "utf8");
 }
 
-async function seedPromotionSourceLock(
-  workspace: string,
-  runId: string,
-  token: string
-): Promise<string> {
-  const lockPath = path.join(
-    workspace,
-    ".autolabos",
-    "runs",
-    runId,
-    PROMOTION_SOURCE_LOCK_FILENAME
-  );
-  await mkdir(path.dirname(lockPath), { recursive: true });
-  await writeFile(lockPath, `${JSON.stringify({
-    token,
-    pid: process.pid,
-    acquired_at: new Date().toISOString()
-  })}\n`, "utf8");
-  return lockPath;
-}
-
 async function writeExecutable(filePath: string, content: string): Promise<void> {
   await writeFile(filePath, content, "utf8");
   await chmod(filePath, 0o755);
-}
-
-async function seedDockerInspectFixture(
-  workspace: string,
-  input: { networkMode: string }
-): Promise<string> {
-  const executable = path.join(workspace, "bin", "docker-fixture.cjs");
-  const inspection = [{
-    Id: "container-fixture-id",
-    Config: { User: "1000:1000" },
-    State: { Running: true, Paused: false, Restarting: false },
-    HostConfig: {
-      Privileged: false,
-      ReadonlyRootfs: true,
-      NetworkMode: input.networkMode,
-      CapDrop: ["ALL"],
-      SecurityOpt: ["no-new-privileges:true"],
-      Devices: [],
-      DeviceRequests: []
-    },
-    Mounts: [{
-      Type: "bind",
-      Source: workspace,
-      Destination: workspace,
-      RW: true
-    }]
-  }];
-  await writeExecutable(executable, [
-    `#!${process.execPath}`,
-    `if (process.argv[2] === "container" && process.argv[3] === "inspect") {`,
-    `  process.stdout.write(${JSON.stringify(JSON.stringify(inspection))});`,
-    `  process.exit(0);`,
-    `}`,
-    `process.exit(2);`,
-    ``
-  ].join("\n"));
-  return executable;
-}
-
-async function seedEphemeralDockerFixture(workspace: string): Promise<string> {
-  const executable = path.join(workspace, "bin", "docker-ephemeral-fixture.cjs");
-  const inspection = [{
-    Id: "ephemeral-container-fixture-id",
-    Config: { User: "1000:1000" },
-    State: { Running: false, Paused: false, Restarting: false },
-    HostConfig: {
-      Privileged: false,
-      ReadonlyRootfs: true,
-      NetworkMode: "none",
-      CapDrop: ["ALL"],
-      SecurityOpt: ["no-new-privileges:true"],
-      Devices: [],
-      DeviceRequests: []
-    },
-    Mounts: [{
-      Type: "bind",
-      Source: workspace,
-      Destination: workspace,
-      RW: false
-    }, {
-      Type: "bind",
-      Source: path.join(workspace, ".autolabos", "runs"),
-      Destination: path.join(workspace, ".autolabos", "runs"),
-      RW: true
-    }]
-  }];
-  await writeExecutable(executable, [
-    "#!" + process.execPath,
-    "const command = process.argv.slice(2);",
-    "if (command[0] === \"create\") { process.stdout.write(\"fixture-id\\n\"); process.exit(0); }",
-    "if (command[0] === \"container\" && command[1] === \"inspect\") {",
-    "  process.stdout.write(" + JSON.stringify(JSON.stringify(inspection)) + ");",
-    "  process.exit(0);",
-    "}",
-    "if (command[0] === \"start\" && command[1] === \"--attach\") { process.exit(0); }",
-    "if (command[0] === \"container\" && command[1] === \"rm\" && command[2] === \"--force\") { process.exit(0); }",
-    "process.exit(2);",
-    ""
-  ].join("\n"));
-  return executable;
 }
 
 async function withWorkspacePath<T>(workspace: string, fn: () => Promise<T>): Promise<T> {

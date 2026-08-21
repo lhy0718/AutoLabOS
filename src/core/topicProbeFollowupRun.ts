@@ -22,10 +22,6 @@ import {
 } from "./runs/researchBriefFiles.js";
 import { buildWorkspaceRunRoot } from "./runs/runPaths.js";
 import {
-  PROMOTION_SOURCE_LOCK_FILENAME,
-  PROMOTION_SOURCE_LOCK_HEARTBEAT_MS
-} from "./runs/topicProbePromotionSourceLock.js";
-import {
   type CreateRunInput,
   RunStore
 } from "./runs/runStore.js";
@@ -47,11 +43,6 @@ import {
   validateTopicProbeSuccessorLineageManifest,
   type TopicProbeSuccessorLineageManifest
 } from "./runs/topicProbeSuccessorLineage.js";
-import {
-  TOPIC_PROBE_OUTCOME_GATE_RELATIVE_PATH,
-  validateTopicProbeOutcomeGateProjection,
-  type TopicProbeOutcomeGateArtifact
-} from "./runs/researchFunnelProjection.js";
 import {
   TOPIC_PROBE_FOLLOWUP_HANDOFF_RELATIVE_PATH,
   resolveTopicProbeFollowupEvidenceStage,
@@ -75,21 +66,14 @@ import {
   validateTopicProbeReviewGate,
   type TopicProbeReviewGateArtifact
 } from "./topicProbeReviewGate.js";
-import {
-  validateVenueViabilityReport,
-  VENUE_VIABILITY_REPORT_RELATIVE_PATH,
-  type VenueViabilityReport
-} from "./venueViability.js";
 
 export const TOPIC_PROBE_FOLLOWUP_RECEIPT_RELATIVE_PATH =
   "review/topic_probe_followup_receipt.json";
 export const CHILD_TOPIC_PROBE_GOVERNANCE_ROOT =
   TOPIC_PROBE_SUCCESSOR_GOVERNANCE_ROOT;
-const PROMOTION_SOURCE_LOCK_RETRY_MS = 25;
-const PROMOTION_SOURCE_LOCK_MAX_ATTEMPTS = 40;
 
 export interface TopicProbeFollowupRunReceipt {
-  schema_version: 5 | 6 | 7;
+  schema_version: 5;
   artifact_kind: "topic_probe_followup_run_receipt";
   relation: RunSuccessorRelation;
   disposition: TopicProbeOutcomeDisposition;
@@ -104,8 +88,6 @@ export interface TopicProbeFollowupRunReceipt {
   source_portfolio_content_sha256: string;
   route_target_content_sha256: string;
   outcome_content_sha256: string;
-  outcome_gate_content_sha256?: string;
-  venue_viability_content_sha256?: string;
   handoff_content_sha256: string;
   review_gate_content_sha256: string;
   research_brief_sha256: string;
@@ -146,7 +128,6 @@ export type TopicProbeFollowupFaultPoint =
   | "after_parent_receipt"
   | "after_child_create"
   | "after_child_initialize"
-  | "after_claim_before_revalidation"
   | "after_claim";
 
 export interface TopicProbeFollowupRunManagerOptions {
@@ -161,21 +142,17 @@ interface BuildReceiptInput {
   parentRun: RunRecord;
   childRunId: string;
   handoff: TopicProbeFollowupHandoff;
-  outcomeGate: TopicProbeOutcomeGateArtifact;
-  venueViability: VenueViabilityReport;
   gate: TopicProbeReviewGateArtifact;
   lineageManifest: TopicProbeSuccessorLineageManifest;
   lineageManifestRaw: string;
 }
 
 interface TopicProbeFollowupPromotionPayload {
-  schema_version: 5;
+  schema_version: 3;
   artifact_kind: "topic_probe_followup_promotion_payload";
   receipt: TopicProbeFollowupRunReceipt;
   child_input: CreateRunInput;
   handoff: TopicProbeFollowupHandoff;
-  outcome_gate: TopicProbeOutcomeGateArtifact;
-  venue_viability: VenueViabilityReport;
   gate: TopicProbeReviewGateArtifact;
   lineage_manifest: TopicProbeSuccessorLineageManifest;
   contract: NonNullable<Awaited<ReturnType<typeof loadTopicProbeOutcomeArtifacts>>["contract"]>;
@@ -203,8 +180,6 @@ const RECEIPT_FIELDS = new Set([
   "source_portfolio_content_sha256",
   "route_target_content_sha256",
   "outcome_content_sha256",
-  "outcome_gate_content_sha256",
-  "venue_viability_content_sha256",
   "handoff_content_sha256",
   "review_gate_content_sha256",
   "research_brief_sha256",
@@ -281,25 +256,6 @@ export class TopicProbeFollowupRunManager {
     }
 
     const parentRoot = buildWorkspaceRunRoot(this.workspaceRoot, parentRun.id);
-    const existingParentReservation = this.promotionStore.getByParentRunId(
-      parentRun.id
-    );
-    if (
-      existingParentReservation?.parentResearchCycle
-        === parentRun.graph.researchCycle
-      && readPromotionPayloadSchemaVersion(
-        existingParentReservation.immutablePayloadJson
-      ) !== 5
-    ) {
-      return {
-        status: "blocked",
-        reasons: [
-          "topic_probe_followup_pre_contract_upgrade_reservation_requires_new_research_cycle"
-        ]
-      };
-    }
-    const releaseSourceLock = await acquirePromotionSourceLock(parentRoot);
-    try {
     const reportRaw = await readRequiredArtifact(
       path.join(parentRoot, "result_analysis.json"),
       "topic_probe_followup_analysis_report"
@@ -329,31 +285,6 @@ export class TopicProbeFollowupRunManager {
       };
     }
 
-    const outcomeGateRaw = await readRequiredArtifact(
-      path.join(parentRoot, TOPIC_PROBE_OUTCOME_GATE_RELATIVE_PATH),
-      "topic_probe_followup_outcome_gate"
-    );
-    const outcomeGateValidation = validateTopicProbeOutcomeGateProjection(
-      outcomeGateRaw,
-      {
-        expectedRunId: parentRun.id,
-        expectedResearchCycle: parentRun.graph.researchCycle,
-        outcome: source.decision
-      }
-    );
-    if (
-      outcomeGateValidation.reasons.length > 0
-      || outcomeGateValidation.gate?.status !== "decided"
-    ) {
-      return {
-        status: "blocked",
-        reasons: outcomeGateValidation.reasons.length > 0
-          ? outcomeGateValidation.reasons
-          : ["topic_probe_followup_outcome_gate_not_decided"]
-      };
-    }
-    const outcomeGate = outcomeGateValidation.gate;
-
     const candidates = source.portfolio.candidates.filter(
       (candidate) =>
         candidate.source_candidate_id === source.contract?.candidate_id
@@ -367,37 +298,6 @@ export class TopicProbeFollowupRunManager {
       );
     }
     const candidate = candidates[0];
-
-    const venueViabilityRaw = await readRequiredArtifact(
-      path.join(parentRoot, VENUE_VIABILITY_REPORT_RELATIVE_PATH),
-      "topic_probe_followup_venue_viability"
-    );
-    const venueViabilityValidation = validateVenueViabilityReport(
-      venueViabilityRaw,
-      {
-        candidate,
-        contract: source.contract,
-        outcome: source.decision
-      }
-    );
-    if (!venueViabilityValidation.valid || !venueViabilityValidation.report) {
-      return {
-        status: "blocked",
-        reasons: venueViabilityValidation.reasons.length > 0
-          ? venueViabilityValidation.reasons
-          : ["topic_probe_followup_venue_viability_invalid"]
-      };
-    }
-    const venueViability = venueViabilityValidation.report;
-    if (
-      source.decision.next_action === "start_confirmatory_run"
-      && venueViability.confirmatory_candidacy !== "supported"
-    ) {
-      return {
-        status: "blocked",
-        reasons: ["topic_probe_followup_venue_viability_blocks_confirmatory"]
-      };
-    }
 
     const handoffRaw = await readRequiredArtifact(
       path.join(parentRoot, TOPIC_PROBE_FOLLOWUP_HANDOFF_RELATIVE_PATH),
@@ -539,8 +439,6 @@ export class TopicProbeFollowupRunManager {
       sourcePortfolio: toLineageArtifactSource(source.portfolio),
       handoff: toLineageArtifactSource(handoff),
       boundedOutcome: toLineageArtifactSource(source.decision),
-      outcomeGate: toLineageArtifactSource(outcomeGate),
-      venueViability: toLineageArtifactSource(venueViability),
       reviewGate: toLineageArtifactSource(gate)
     });
     const lineageManifestRaw =
@@ -549,8 +447,6 @@ export class TopicProbeFollowupRunManager {
       parentRun,
       childRunId,
       handoff,
-      outcomeGate,
-      venueViability,
       gate,
       lineageManifest,
       lineageManifestRaw
@@ -559,8 +455,6 @@ export class TopicProbeFollowupRunManager {
       receipt,
       childInput,
       handoff,
-      outcomeGate,
-      venueViability,
       gate,
       lineageManifest,
       contract: source.contract,
@@ -570,24 +464,6 @@ export class TopicProbeFollowupRunManager {
       extracted: governedExtracted,
       completeness
     });
-    const existingReservation = this.promotionStore.getByParentCycle(
-      parentRun.id,
-      parentRun.graph.researchCycle,
-      relation
-    );
-    if (
-      existingReservation
-      && readPromotionPayloadSchemaVersion(
-        existingReservation.immutablePayloadJson
-      ) !== 5
-    ) {
-      return {
-        status: "blocked",
-        reasons: [
-          "topic_probe_followup_pre_contract_upgrade_reservation_requires_new_research_cycle"
-        ]
-      };
-    }
     const reserveResult = this.promotionStore.reserveOrLoad({
       parentRunId: parentRun.id,
       parentResearchCycle: parentRun.graph.researchCycle,
@@ -616,16 +492,6 @@ export class TopicProbeFollowupRunManager {
     ) {
       throw new Error("topic_probe_followup_parent_state_changed_after_reserve");
     }
-    await revalidatePromotionSourceBeforeClaim({
-      workspaceRoot: this.workspaceRoot,
-      parentRun: persistedParent,
-      expectedOutcomeContentSha256:
-        reserveResult.reservation.outcomeContentSha256,
-      expectedOutcomeGateContentSha256:
-        immutable.outcome_gate.content_sha256,
-      expectedVenueViabilityContentSha256:
-        immutable.venue_viability.content_sha256
-    });
 
     await writeOrValidateArtifact({
       workspaceRoot: this.workspaceRoot,
@@ -655,8 +521,6 @@ export class TopicProbeFollowupRunManager {
         outcome: immutable.outcome,
         candidate: immutable.candidate,
         portfolio: immutable.portfolio,
-        outcomeGate: immutable.outcome_gate,
-        venueViability: immutable.venue_viability,
         gate: immutable.gate,
         handoff: immutable.handoff,
         receipt: immutable.receipt,
@@ -679,11 +543,7 @@ export class TopicProbeFollowupRunManager {
       workspaceRoot: this.workspaceRoot,
       parentRun: preClaimParent,
       expectedOutcomeContentSha256:
-        reserveResult.reservation.outcomeContentSha256,
-      expectedOutcomeGateContentSha256:
-        immutable.outcome_gate.content_sha256,
-      expectedVenueViabilityContentSha256:
-        immutable.venue_viability.content_sha256
+        reserveResult.reservation.outcomeContentSha256
     });
     const claim = this.promotionStore.claimExecution({
       childRunId,
@@ -725,55 +585,6 @@ export class TopicProbeFollowupRunManager {
       claim.lease,
       this.leaseDurationMs
     );
-    this.faultInjector?.("after_claim_before_revalidation");
-    try {
-      const postClaimParent = await this.runStore.getRun(parentRun.id);
-      if (
-        !postClaimParent
-        || buildPromotionParentStateSha256(postClaimParent)
-          !== reserveResult.reservation.parentStateSha256
-      ) {
-        throw new Error(
-          "topic_probe_followup_parent_state_changed_after_claim"
-        );
-      }
-      await revalidatePromotionSourceBeforeClaim({
-        workspaceRoot: this.workspaceRoot,
-        parentRun: postClaimParent,
-        expectedOutcomeContentSha256:
-          reserveResult.reservation.outcomeContentSha256,
-        expectedOutcomeGateContentSha256:
-          immutable.outcome_gate.content_sha256,
-        expectedVenueViabilityContentSha256:
-          immutable.venue_viability.content_sha256
-      });
-    } catch (error) {
-      const reason = normalizeErrorCode(error);
-      const terminalState = this.promotionStore.markTerminal({
-        childRunId,
-        ownerId: executionLease.ownerId,
-        fenceToken: executionLease.fenceToken,
-        status: "failed",
-        detail: `post_claim_source_validation_failed:${reason}`
-      });
-      childRun.status = "failed";
-      childRun.latestSummary =
-        `Delegated execution blocked after source validation failed: ${reason}`;
-      childRun.graph.nodeStates[childRun.currentNode] = {
-        ...childRun.graph.nodeStates[childRun.currentNode],
-        status: "failed",
-        updatedAt: new Date().toISOString(),
-        lastError: `topic_probe_followup_postclaim_source_invalid:${reason}`
-      };
-      await this.runStore.updateRun(childRun);
-      return {
-        status: "blocked",
-        reasons: [`topic_probe_followup_postclaim_source_invalid:${reason}`],
-        childRun,
-        receipt: immutable.receipt,
-        terminalState
-      };
-    }
     if (
       childRun.status === "completed"
       || childRun.delegatedSuccessor?.state === "delegated"
@@ -804,9 +615,6 @@ export class TopicProbeFollowupRunManager {
       receipt: immutable.receipt,
       executionLease
     };
-    } finally {
-      await releaseSourceLock();
-    }
   }
 
   async heartbeatExecution(
@@ -871,7 +679,7 @@ export function buildTopicProbeFollowupRunReceipt(
 ): TopicProbeFollowupRunReceipt {
   assertReceiptManifestBindings(input);
   const payload: Omit<TopicProbeFollowupRunReceipt, "content_sha256"> = {
-    schema_version: 7,
+    schema_version: 5,
     artifact_kind: "topic_probe_followup_run_receipt",
     relation: input.lineageManifest.relation,
     disposition: input.handoff.disposition,
@@ -888,8 +696,6 @@ export function buildTopicProbeFollowupRunReceipt(
       input.handoff.source_portfolio_content_sha256,
     route_target_content_sha256: input.handoff.route_target.content_sha256,
     outcome_content_sha256: input.handoff.outcome_content_sha256,
-    outcome_gate_content_sha256: input.outcomeGate.content_sha256,
-    venue_viability_content_sha256: input.venueViability.content_sha256,
     handoff_content_sha256: input.handoff.content_sha256,
     review_gate_content_sha256: input.gate.content_sha256,
     research_brief_sha256: hashCanonical(input.handoff.research_brief_markdown),
@@ -939,10 +745,6 @@ function assertReceiptManifestBindings(input: BuildReceiptInput): void {
     || manifest.handoff.content_sha256 !== input.handoff.content_sha256
     || manifest.bounded_outcome.content_sha256
       !== input.handoff.outcome_content_sha256
-    || manifest.outcome_gate?.content_sha256
-      !== input.outcomeGate.content_sha256
-    || manifest.venue_viability?.content_sha256
-      !== input.venueViability.content_sha256
     || manifest.review_gate.content_sha256 !== input.gate.content_sha256
     || manifest.source_brief.content_sha256
       !== hashCanonical(input.handoff.research_brief_markdown)
@@ -991,8 +793,6 @@ function buildTopicProbeFollowupPromotionPayload(input: {
   receipt: TopicProbeFollowupRunReceipt;
   childInput: CreateRunInput;
   handoff: TopicProbeFollowupHandoff;
-  outcomeGate: TopicProbeOutcomeGateArtifact;
-  venueViability: VenueViabilityReport;
   gate: TopicProbeReviewGateArtifact;
   lineageManifest: TopicProbeSuccessorLineageManifest;
   contract: TopicProbeFollowupPromotionPayload["contract"];
@@ -1003,13 +803,11 @@ function buildTopicProbeFollowupPromotionPayload(input: {
   completeness: TopicProbeFollowupPromotionPayload["brief_completeness"];
 }): TopicProbeFollowupPromotionPayload {
   const payload: Omit<TopicProbeFollowupPromotionPayload, "content_sha256"> = {
-    schema_version: 5,
+    schema_version: 3,
     artifact_kind: "topic_probe_followup_promotion_payload",
     receipt: input.receipt,
     child_input: input.childInput,
     handoff: input.handoff,
-    outcome_gate: input.outcomeGate,
-    venue_viability: input.venueViability,
     gate: input.gate,
     lineage_manifest: input.lineageManifest,
     contract: input.contract,
@@ -1037,14 +835,12 @@ function parseTopicProbeFollowupPromotionPayload(
   }
   if (
     !isRecord(value)
-    || value.schema_version !== 5
+    || value.schema_version !== 3
     || value.artifact_kind !== "topic_probe_followup_promotion_payload"
     || !isTopicProbeFollowupRunReceipt(value.receipt)
     || !isRecord(value.child_input)
     || !isRecord(value.handoff)
     || !isRecord(value.handoff.route_target)
-    || !isRecord(value.outcome_gate)
-    || !isRecord(value.venue_viability)
     || !isRecord(value.gate)
     || !isRecord(value.lineage_manifest)
     || !isRecord(value.contract)
@@ -1097,43 +893,6 @@ function parseTopicProbeFollowupPromotionPayload(
     );
   }
   const lineageManifest = lineageManifestValidation.manifest;
-  const outcomeGateValidation = validateTopicProbeOutcomeGateProjection(
-    JSON.stringify(value.outcome_gate),
-    {
-      expectedRunId: value.receipt.parent_run_id,
-      expectedResearchCycle: value.receipt.parent_research_cycle,
-      outcome: value.outcome as unknown as TopicProbeFollowupPromotionPayload["outcome"]
-    }
-  );
-  if (
-    outcomeGateValidation.reasons.length > 0
-    || outcomeGateValidation.gate?.status !== "decided"
-  ) {
-    throw new Error(
-      `topic_probe_followup_promotion_outcome_gate_invalid:${outcomeGateValidation.reasons[0] || "not_decided"}`
-    );
-  }
-  const venueViabilityValidation = validateVenueViabilityReport(
-    JSON.stringify(value.venue_viability),
-    {
-      candidate: value.candidate as unknown as TopicProbeFollowupPromotionPayload["candidate"],
-      contract: value.contract as unknown as TopicProbeFollowupPromotionPayload["contract"],
-      outcome: value.outcome as unknown as TopicProbeFollowupPromotionPayload["outcome"]
-    }
-  );
-  if (!venueViabilityValidation.valid || !venueViabilityValidation.report) {
-    throw new Error(
-      `topic_probe_followup_promotion_venue_viability_invalid:${venueViabilityValidation.reasons[0] || "missing"}`
-    );
-  }
-  if (
-    value.outcome.next_action === "start_confirmatory_run"
-    && venueViabilityValidation.report.confirmatory_candidacy !== "supported"
-  ) {
-    throw new Error(
-      "topic_probe_followup_promotion_venue_viability_blocks_confirmatory"
-    );
-  }
   if (
     lineageManifest.parent_run_id !== value.receipt.parent_run_id
     || lineageManifest.parent_research_cycle
@@ -1158,10 +917,6 @@ function parseTopicProbeFollowupPromotionPayload(
       !== value.receipt.contract_content_sha256
     || value.outcome.content_sha256
       !== value.receipt.outcome_content_sha256
-    || value.outcome_gate.content_sha256
-      !== value.receipt.outcome_gate_content_sha256
-    || value.venue_viability.content_sha256
-      !== value.receipt.venue_viability_content_sha256
     || value.candidate.content_sha256
       !== value.handoff.candidate_content_sha256
     || value.portfolio.content_sha256
@@ -1186,10 +941,6 @@ function parseTopicProbeFollowupPromotionPayload(
       !== value.receipt.handoff_content_sha256
     || lineageManifest.bounded_outcome.content_sha256
       !== value.receipt.outcome_content_sha256
-    || lineageManifest.outcome_gate?.content_sha256
-      !== value.receipt.outcome_gate_content_sha256
-    || lineageManifest.venue_viability?.content_sha256
-      !== value.receipt.venue_viability_content_sha256
     || lineageManifest.review_gate.content_sha256
       !== value.receipt.review_gate_content_sha256
     || lineageManifest.source_brief.content_sha256
@@ -1239,8 +990,6 @@ async function revalidatePromotionSourceBeforeClaim(input: {
   workspaceRoot: string;
   parentRun: RunRecord;
   expectedOutcomeContentSha256: string;
-  expectedOutcomeGateContentSha256: string;
-  expectedVenueViabilityContentSha256: string;
 }): Promise<void> {
   const parentRoot = buildWorkspaceRunRoot(
     input.workspaceRoot,
@@ -1274,28 +1023,6 @@ async function revalidatePromotionSourceBeforeClaim(input: {
   if (source.decision.content_sha256 !== input.expectedOutcomeContentSha256) {
     throw new Error("topic_probe_followup_preclaim_outcome_identity_changed");
   }
-  const outcomeGateRaw = await readRequiredArtifact(
-    path.join(parentRoot, TOPIC_PROBE_OUTCOME_GATE_RELATIVE_PATH),
-    "topic_probe_followup_preclaim_outcome_gate"
-  );
-  const outcomeGateValidation = validateTopicProbeOutcomeGateProjection(
-    outcomeGateRaw,
-    {
-      expectedRunId: input.parentRun.id,
-      expectedResearchCycle: input.parentRun.graph.researchCycle,
-      outcome: source.decision
-    }
-  );
-  if (
-    outcomeGateValidation.reasons.length > 0
-    || outcomeGateValidation.gate?.status !== "decided"
-    || outcomeGateValidation.gate.content_sha256
-      !== input.expectedOutcomeGateContentSha256
-  ) {
-    throw new Error(
-      `topic_probe_followup_preclaim_outcome_gate_invalid:${outcomeGateValidation.reasons[0] || "identity_changed"}`
-    );
-  }
   const candidates = source.portfolio.candidates.filter(
     (candidate) =>
       candidate.source_candidate_id === source.contract?.candidate_id
@@ -1303,32 +1030,6 @@ async function revalidatePromotionSourceBeforeClaim(input: {
   );
   if (candidates.length !== 1) {
     throw new Error("topic_probe_followup_preclaim_candidate_ambiguous");
-  }
-  const venueViabilityRaw = await readRequiredArtifact(
-    path.join(parentRoot, VENUE_VIABILITY_REPORT_RELATIVE_PATH),
-    "topic_probe_followup_preclaim_venue_viability"
-  );
-  const venueViabilityValidation = validateVenueViabilityReport(
-    venueViabilityRaw,
-    {
-      candidate: candidates[0],
-      contract: source.contract,
-      outcome: source.decision
-    }
-  );
-  if (
-    !venueViabilityValidation.valid
-    || !venueViabilityValidation.report
-    || venueViabilityValidation.report.content_sha256
-      !== input.expectedVenueViabilityContentSha256
-    || (
-      source.decision.next_action === "start_confirmatory_run"
-      && venueViabilityValidation.report.confirmatory_candidacy !== "supported"
-    )
-  ) {
-    throw new Error(
-      `topic_probe_followup_preclaim_venue_viability_invalid:${venueViabilityValidation.reasons[0] || "identity_or_route_changed"}`
-    );
   }
   const handoffRaw = await readRequiredArtifact(
     path.join(parentRoot, TOPIC_PROBE_FOLLOWUP_HANDOFF_RELATIVE_PATH),
@@ -1378,8 +1079,6 @@ async function initializeOrValidateChildRun(input: {
     outcome: NonNullable<Awaited<ReturnType<typeof loadTopicProbeOutcomeArtifacts>>["decision"]>;
     candidate: NonNullable<Awaited<ReturnType<typeof loadTopicProbeOutcomeArtifacts>>["portfolio"]>["candidates"][number];
     portfolio: NonNullable<Awaited<ReturnType<typeof loadTopicProbeOutcomeArtifacts>>["portfolio"]>;
-    outcomeGate: TopicProbeOutcomeGateArtifact;
-    venueViability: VenueViabilityReport;
     gate: TopicProbeReviewGateArtifact;
     handoff: TopicProbeFollowupHandoff;
     receipt: TopicProbeFollowupRunReceipt;
@@ -1400,16 +1099,6 @@ async function initializeOrValidateChildRun(input: {
       TOPIC_PROBE_SUCCESSOR_ARTIFACT_PATHS.handoff,
       `${JSON.stringify(input.source.handoff, null, 2)}\n`,
       "topic_probe_followup_child_handoff_mismatch"
-    ],
-    [
-      TOPIC_PROBE_SUCCESSOR_ARTIFACT_PATHS.outcomeGate,
-      `${JSON.stringify(input.source.outcomeGate, null, 2)}\n`,
-      "topic_probe_followup_child_outcome_gate_mismatch"
-    ],
-    [
-      TOPIC_PROBE_SUCCESSOR_ARTIFACT_PATHS.venueViability,
-      `${JSON.stringify(input.source.venueViability, null, 2)}\n`,
-      "topic_probe_followup_child_venue_viability_mismatch"
     ],
     [
       TOPIC_PROBE_SUCCESSOR_ARTIFACT_PATHS.reviewGate,
@@ -1491,10 +1180,6 @@ async function initializeOrValidateChildRun(input: {
         route_target_content_sha256:
           input.source.receipt.route_target_content_sha256,
         outcome_content_sha256: input.source.receipt.outcome_content_sha256,
-        outcome_gate_content_sha256:
-          input.source.receipt.outcome_gate_content_sha256,
-        venue_viability_content_sha256:
-          input.source.receipt.venue_viability_content_sha256,
         receipt_content_sha256: input.source.receipt.content_sha256,
         lineage_manifest_content_sha256:
           input.source.receipt.lineage_manifest_content_sha256,
@@ -1553,17 +1238,6 @@ function toLineageArtifactSource(
   };
 }
 
-function readPromotionPayloadSchemaVersion(raw: string): number | undefined {
-  try {
-    const value = JSON.parse(raw) as unknown;
-    return isRecord(value) && Number.isInteger(value.schema_version)
-      ? Number(value.schema_version)
-      : undefined;
-  } catch {
-    return undefined;
-  }
-}
-
 function isPristineRun(run: RunRecord): boolean {
   return run.status === "pending"
     && run.currentNode === "collect_papers"
@@ -1581,68 +1255,6 @@ async function readRequiredArtifact(
     throw new Error(`${code}_missing`);
   }
   return raw;
-}
-
-async function acquirePromotionSourceLock(
-  parentRoot: string
-): Promise<() => Promise<void>> {
-  const lockPath = path.join(parentRoot, PROMOTION_SOURCE_LOCK_FILENAME);
-  const token = randomUUID();
-  await fs.mkdir(parentRoot, { recursive: true });
-
-  for (let attempt = 0; attempt < PROMOTION_SOURCE_LOCK_MAX_ATTEMPTS; attempt += 1) {
-    try {
-      const handle = await fs.open(lockPath, "wx", 0o600);
-      await handle.writeFile(`${JSON.stringify({
-        token,
-        pid: process.pid,
-        acquired_at: new Date().toISOString()
-      })}\n`, "utf8");
-      const heartbeat = setInterval(() => {
-        const now = new Date();
-        void fs.utimes(lockPath, now, now).catch(() => undefined);
-      }, PROMOTION_SOURCE_LOCK_HEARTBEAT_MS);
-      heartbeat.unref();
-      return async () => {
-        clearInterval(heartbeat);
-        await handle.close();
-        try {
-          const current = JSON.parse(await fs.readFile(lockPath, "utf8")) as {
-            token?: unknown;
-          };
-          if (current.token === token) {
-            await fs.unlink(lockPath);
-          }
-        } catch (error) {
-          if (readErrorCode(error) !== "ENOENT") throw error;
-        }
-      };
-    } catch (error) {
-      if (readErrorCode(error) !== "EEXIST") throw error;
-      if (attempt + 1 >= PROMOTION_SOURCE_LOCK_MAX_ATTEMPTS) {
-        throw new Error("topic_probe_followup_source_lock_timeout");
-      }
-      await new Promise((resolve) => {
-        setTimeout(resolve, PROMOTION_SOURCE_LOCK_RETRY_MS);
-      });
-    }
-  }
-  throw new Error("topic_probe_followup_source_lock_timeout");
-}
-
-export async function withTopicProbePromotionSourceLock<T>(input: {
-  workspaceRoot: string;
-  runId: string;
-  operation: () => Promise<T>;
-}): Promise<T> {
-  const release = await acquirePromotionSourceLock(
-    buildWorkspaceRunRoot(input.workspaceRoot, input.runId)
-  );
-  try {
-    return await input.operation();
-  } finally {
-    await release();
-  }
 }
 
 async function readOptionalArtifact(
@@ -1682,11 +1294,7 @@ function isTopicProbeFollowupRunReceipt(
   if (!isRecord(value) || !Object.keys(value).every((field) => RECEIPT_FIELDS.has(field))) {
     return false;
   }
-  return (
-    value.schema_version === 5
-    || value.schema_version === 6
-    || value.schema_version === 7
-  )
+  return value.schema_version === 5
     && value.artifact_kind === "topic_probe_followup_run_receipt"
     && isRunSuccessorRelation(value.relation)
     && isDisposition(value.disposition)
@@ -1702,12 +1310,6 @@ function isTopicProbeFollowupRunReceipt(
     && isSha256(value.source_portfolio_content_sha256)
     && isSha256(value.route_target_content_sha256)
     && isSha256(value.outcome_content_sha256)
-    && (value.schema_version === 5
-      ? value.outcome_gate_content_sha256 === undefined
-      : isSha256(value.outcome_gate_content_sha256))
-    && (value.schema_version === 7
-      ? isSha256(value.venue_viability_content_sha256)
-      : value.venue_viability_content_sha256 === undefined)
     && isSha256(value.handoff_content_sha256)
     && isSha256(value.review_gate_content_sha256)
     && isSha256(value.research_brief_sha256)

@@ -316,8 +316,7 @@ describe("resolveRunCommand", () => {
       "CUDA_VISIBLE_DEVICES=0,1 python3 configured_runner.py --num-gpus 2"
     )).toMatchObject({
       requestedGpuCount: 2,
-      environmentGpuLimit: 2,
-      visibleGpuDeviceIds: ["0", "1"]
+      environmentGpuLimit: 2
     });
     expect(resolveRunCommandGpuRequestMetadata(
       "python3 configured_runner.py --num-gpus 1 --nproc-per-node 2"

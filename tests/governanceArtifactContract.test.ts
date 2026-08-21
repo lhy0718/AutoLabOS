@@ -54,24 +54,6 @@ describe("governanceArtifactContract", () => {
     expect(report.issues.map((issue) => issue.file_path)).toContain("result_table.json");
   });
 
-  it("accepts a declared evidence-blocked report without a manuscript", async () => {
-    const runDir = await makeRunDir("run-artifact-contract-evidence-blocked");
-    await seedGatedArtifacts(runDir, { paperReady: false });
-    await rm(path.join(runDir, "paper", "main.tex"));
-    await writeFile(path.join(runDir, "paper", "draft.md"), "# Evidence-blocked report\n", "utf8");
-    await writeJson(path.join(runDir, "paper", "paper_readiness.json"), {
-      paper_ready: false,
-      readiness_state: "evidence_blocked",
-      publication_artifact_type: "evidence_blocked_report"
-    });
-
-    const report = await validateGovernanceArtifactContract({ runDir, condition: "gated" });
-
-    expect(report.passed).toBe(true);
-    expect(report.required_artifacts).toContain("paper/draft.md");
-    expect(report.required_artifacts).not.toContain("paper/main.tex");
-  });
-
   it("accepts paper_ready=true only with a current hash-bound reference authority pass", async () => {
     const runDir = await makeRunDir("run-artifact-contract-authority-pass");
     await seedGatedArtifacts(runDir, { paperReady: true });

@@ -11,8 +11,7 @@ Applies to:
 
 Checks here are deterministic where possible and artifact-driven by default.
 
-Scientific novelty is evaluated separately rather than fully scored by this
-quality bar.
+This document does **not** try to fully score scientific novelty.
 It does enforce a minimum boundary between:
 - execution completed
 - experiment structurally valid
@@ -65,17 +64,6 @@ When execution is recorded as successful:
 - `run_manifest.json` should exist and summarize what was run.
 - `experiment_portfolio.json` or an equivalent design artifact should exist and describe the planned trial groups.
 - At least one concrete run record must exist under the run artifact tree.
-- `execution/execution_envelope.json` and
-  `execution/execution_receipt.json` must exist, bind each other by SHA-256,
-  and name the actual assurance level. Runtime success may use a `partial` or
-  `compatibility` receipt, but paper-scale promotion may not.
-- `bubblewrap` availability alone is insufficient: an `enforced` receipt
-  requires a successful host probe and an adapter-controlled marker proving
-  that the experiment command started after namespace and mount setup.
-- GPU-backed paper-scale execution must bind a positive requested GPU count and
-  the same number of concrete numeric visible-device IDs. Missing IDs, UUID-only
-  device selectors, unavailable device nodes, and Docker/remote execution through
-  the local adapter remain `partial` until a dedicated enforced adapter exists.
 
 ### B. `analyze_results` success expectations
 When `analyze_results` is completed:
@@ -87,21 +75,7 @@ When `analyze_results` is completed:
 - when a portfolio or supplemental trial structure exists, `result_analysis.json` should expose the trial-group summary rather than flattening everything into one opaque run.
 - when a governed brief declares minimum acceptable evidence, `analysis/evidence_scale_assessment.json` must exist and state whether the executed evidence satisfied that floor.
 
-### C. Topic-probe viability projection
-When a bounded topic probe produces a valid outcome:
-- `analysis/venue_viability_report.json` must be recomputable from the active
-  candidate, active contract, closest-prior absorption projection, and outcome.
-- Candidate viability is scoped to the active candidate, not the whole research
-  program.
-- The current evidence ceiling remains `screening_only`.
-- `top_tier_ready` and `acceptance_likelihood_assessed` remain false.
-- Top-tier readiness remains `blocked` or `unresolved` at bounded-probe stage.
-- Confirmatory candidacy is reported separately and does not support a
-  submission or acceptance claim.
-- The report cannot create a second transition authority. It may only veto a
-  confirmatory route when candidacy is `unsupported`.
-
-### D. `review` output expectations
+### C. `review` output expectations
 When `review` is completed:
 - `review/review_packet.json` must exist and contain core sections.
 - `review/decision.json` and `review/revision_plan.json` must exist when review packet decisioning is present.
@@ -133,21 +107,6 @@ For an experiment result to count as paper-scale candidate evidence, all of the 
 6. The experiment output is connected to the stated research question.
 7. The run is not merely a smoke test of the workflow itself.
 8. The evidence goes beyond a single thin run by including repeated trials/folds/seeds or explicit robustness evidence such as confidence intervals, stability metrics, or effect estimates.
-9. The primary execution has a hash-valid `enforcement=enforced` receipt whose
-   environment, workspace, input-hash, timeout, network-policy, and mount-
-   isolation and device-policy assurances all pass, whose dependency lock is
-   present, and whose required outputs are hash-bound. Docker receipts require
-   matching pre/post container-boundary inspection plus receipt-bound hashed
-   boundary fingerprints, stability, immutable-image, and cleanup evidence.
-   Image-backed execution
-   must also bind an immutable image ID or digest, mask workspace dotenv files,
-   reject dotenv symlinks, bind declared scoped-secret content in memory,
-   verify the private read-only secret snapshot, and prove per-envelope create,
-   non-timeout completion, and cleanup; an uninspected
-   `docker exec` is not paper-grade execution evidence.
-10. A development or tuning run that claims confirmatory blindness uses a
-    physically separate mounted workspace. Code-level non-use of reachable
-    confirmatory labels or gold data is not sufficient evidence of sealing.
 
 If any of the above is missing, the result may still be valid runtime output,
 but it must not be treated as paper-worthy experimental evidence.

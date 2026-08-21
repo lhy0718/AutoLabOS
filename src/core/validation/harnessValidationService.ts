@@ -322,9 +322,6 @@ export function defaultRemediationForIssueCode(code: string): string {
   if (code.includes("collect_background_job")) {
     return "Rewrite or clear collect_background_job.json so deferred enrichment recovery metadata matches the current run.";
   }
-  if (code.includes("venue_viability_report")) {
-    return "Regenerate analysis/venue_viability_report.json from the validated topic portfolio, active probe contract, and bounded-probe outcome before review.";
-  }
   if (code.includes("review_")) {
     return "Align review decision artifacts, run status, and paper output state before marking the run as completed.";
   }

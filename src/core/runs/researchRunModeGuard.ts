@@ -38,10 +38,6 @@ import {
   type TopicProbeSuccessorArtifactBinding,
   type TopicProbeSuccessorLineageManifest
 } from "./topicProbeSuccessorLineage.js";
-import {
-  validateTopicProbeOutcomeGateProjection,
-  type TopicProbeOutcomeGateArtifact
-} from "./researchFunnelProjection.js";
 
 import {
   parseDeclaredResearchRunMode,
@@ -59,10 +55,6 @@ import { TOPIC_PROBE_REVIEW_GATE_RELATIVE_PATH } from "../topicProbeReviewGate.j
 import type {
   TopicProbeSuccessorRouteTarget
 } from "../topicProbeSuccessorRouteTarget.js";
-import {
-  validateVenueViabilityReport,
-  type VenueViabilityReport
-} from "../venueViability.js";
 
 export type ResearchEvidenceStage =
   | "standard"
@@ -432,22 +424,6 @@ async function validateSuccessorReceiptBinding(input: {
     binding: manifest.bounded_outcome,
     reasons
   });
-  const outcomeGateArtifact = manifest.outcome_gate
-    ? await readBoundJsonArtifact({
-        runDir: input.runDir,
-        label: "outcome_gate",
-        binding: manifest.outcome_gate,
-        reasons
-      })
-    : undefined;
-  const venueViabilityArtifact = manifest.venue_viability
-    ? await readBoundJsonArtifact({
-        runDir: input.runDir,
-        label: "venue_viability",
-        binding: manifest.venue_viability,
-        reasons
-      })
-    : undefined;
   const reviewGateArtifact = await readBoundJsonArtifact({
     runDir: input.runDir,
     label: "review_gate",
@@ -461,8 +437,6 @@ async function validateSuccessorReceiptBinding(input: {
     || !sourcePortfolioArtifact
     || !handoffArtifact
     || !boundedOutcomeArtifact
-    || (manifest.schema_version >= 4 && !outcomeGateArtifact)
-    || (manifest.schema_version === 5 && !venueViabilityArtifact)
     || !reviewGateArtifact
   ) {
     return { reasons };
@@ -472,12 +446,6 @@ async function validateSuccessorReceiptBinding(input: {
   const candidate = sourceCandidateArtifact.value as unknown as TopicPortfolioCandidate;
   const portfolio = sourcePortfolioArtifact.value as unknown as TopicPortfolio;
   const outcome = boundedOutcomeArtifact.value as unknown as TopicProbeOutcomeDecision;
-  const outcomeGate = outcomeGateArtifact?.value as
-    | TopicProbeOutcomeGateArtifact
-    | undefined;
-  const venueViability = venueViabilityArtifact?.value as
-    | VenueViabilityReport
-    | undefined;
   const handoff = handoffArtifact.value as unknown as TopicProbeFollowupHandoff;
   const gate = reviewGateArtifact.value as unknown as TopicProbeReviewGateArtifact;
 
@@ -546,44 +514,6 @@ async function validateSuccessorReceiptBinding(input: {
     outcomeValidation.reasons
   ));
 
-  if (outcomeGateArtifact) {
-    const outcomeGateValidation = validateTopicProbeOutcomeGateProjection(
-      outcomeGateArtifact.raw,
-      {
-        expectedRunId: receipt.parent_run_id,
-        expectedResearchCycle: receipt.parent_research_cycle,
-        outcome
-      }
-    );
-    reasons.push(...prefixReasons(
-      "successor_followup_outcome_gate_invalid",
-      outcomeGateValidation.reasons
-    ));
-    if (outcomeGateValidation.gate?.status !== "decided") {
-      reasons.push("successor_followup_outcome_gate_not_decided");
-    }
-  }
-
-  if (venueViabilityArtifact) {
-    const venueViabilityValidation = validateVenueViabilityReport(
-      venueViabilityArtifact.raw,
-      { candidate, contract, outcome }
-    );
-    reasons.push(...prefixReasons(
-      "successor_followup_venue_viability_invalid",
-      venueViabilityValidation.reasons
-    ));
-    if (
-      outcome.next_action === "start_confirmatory_run"
-      && venueViabilityValidation.report?.confirmatory_candidacy
-        !== "supported"
-    ) {
-      reasons.push(
-        "successor_followup_venue_viability_blocks_confirmatory"
-      );
-    }
-  }
-
   const handoffValidation = validateTopicProbeFollowupHandoff(
     handoffArtifact.raw,
     {
@@ -633,12 +563,6 @@ async function validateSuccessorReceiptBinding(input: {
     || manifest.recommended_followup_mode
       !== receipt.recommended_followup_mode
     || manifest.evidence_stage !== receipt.evidence_stage
-    || (manifest.schema_version >= 4 && outcomeGate?.status !== "decided")
-    || (
-      manifest.schema_version === 5
-      && outcome.next_action === "start_confirmatory_run"
-      && venueViability?.confirmatory_candidacy !== "supported"
-    )
     || gate.status !== "followup_required"
     || gate.paper_drafting_allowed !== false
   ) {
@@ -710,20 +634,6 @@ function compareReceiptToManifest(
       manifest.bounded_outcome.content_sha256,
       receipt.outcome_content_sha256
     ],
-    ...(receipt.schema_version >= 6
-      ? [[
-          "outcome_gate_content_sha256",
-          manifest.outcome_gate?.content_sha256,
-          receipt.outcome_gate_content_sha256
-        ] as [string, unknown, unknown]]
-      : []),
-    ...(receipt.schema_version === 7
-      ? [[
-          "venue_viability_content_sha256",
-          manifest.venue_viability?.content_sha256,
-          receipt.venue_viability_content_sha256
-        ] as [string, unknown, unknown]]
-      : []),
     [
       "review_gate_content_sha256",
       manifest.review_gate.content_sha256,

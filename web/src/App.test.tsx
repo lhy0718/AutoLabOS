@@ -3660,29 +3660,6 @@ describe("App", () => {
           path: "analysis/topic_probe_outcome_gate.json"
         }
       },
-      venue_viability: {
-        status: "trusted",
-        trusted: true,
-        candidate_viability: "continue",
-        current_evidence_ceiling: "screening_only",
-        top_tier_readiness: "unresolved",
-        confirmatory_candidacy: "supported",
-        declared_comparator_effect_gate: "passed",
-        top_tier_ready: false,
-        acceptance_likelihood_assessed: false,
-        reason_codes: [
-          "confirmatory_gate_satisfied",
-          "bounded_probe_is_screening_only"
-        ],
-        required_upgrades: [
-          "confirmatory_evidence_required",
-          "current_venue_fit_review_required"
-        ],
-        artifact_ref: {
-          label: "Venue viability",
-          path: "analysis/venue_viability_report.json"
-        }
-      },
       followup_handoff: {
         status: "ready",
         trusted: true,
@@ -3713,21 +3690,6 @@ describe("App", () => {
     expect(funnel.querySelector(".status-pill")).not.toHaveTextContent("Probe authorized");
     expect(within(funnel).getByText("Promote To Confirmatory")).toBeInTheDocument();
     expect(within(funnel).getByText("Start Confirmatory Run")).toBeInTheDocument();
-    expect(within(funnel).getByText("Candidate viability").closest("div")).toHaveTextContent(
-      "Continue"
-    );
-    expect(within(funnel).getByText("Venue assessment").closest("div")).toHaveTextContent(
-      "Trusted (trusted)"
-    );
-    expect(within(funnel).getByText("Confirmatory candidacy").closest("div")).toHaveTextContent(
-      "Supported"
-    );
-    expect(within(funnel).getByText("Current evidence ceiling").closest("div")).toHaveTextContent(
-      "Screening Only"
-    );
-    expect(within(funnel).getByText("Top-tier readiness").closest("div")).toHaveTextContent(
-      "Unresolved (not ready; acceptance not assessed)"
-    );
     const lifecycle = within(funnel).getByLabelText("Topic probe persisted lifecycle");
     expect(within(lifecycle).getByText("decided")).toBeInTheDocument();
     expect(within(lifecycle).getByText("ready")).toBeInTheDocument();
@@ -4057,45 +4019,6 @@ describe("App", () => {
     expect(assuranceCard).not.toBeNull();
     expect(within(assuranceCard!).getByText("Not started")).toBeInTheDocument();
     expect(within(assuranceCard!).getByText("Review has not started.")).toBeInTheDocument();
-  });
-
-  it("renders blocked research-process checks and their evidence", async () => {
-    renderAppWithResearchFunnel(
-      {},
-      undefined,
-      [],
-      undefined,
-      undefined,
-      undefined,
-      {
-        version: 1,
-        status: "blocked",
-        trusted: false,
-        paper_ready_eligible: false,
-        required_check_count: 3,
-        passed_required_check_count: 2,
-        blocker_count: 1,
-        reason_codes: ["plan_execution_binding_mismatch"],
-        checks: [{
-          id: "plan_execution_alignment",
-          status: "fail",
-          required: true,
-          reason_codes: ["plan_execution_binding_mismatch"],
-          artifact_refs: [{ label: "Run manifest", path: "run_manifest.json" }]
-        }],
-        policy_note: "Artifact-backed process integrity."
-      }
-    );
-
-    const overview = within(await openDetails("Run details")).getByRole("tabpanel", { name: "Run details" });
-    const label = within(overview).getByText("Research process");
-    const card = label.closest("article");
-    expect(card).not.toBeNull();
-    expect(within(card!).getByText("blocked · 2/3")).toBeInTheDocument();
-    const checks = within(overview).getByRole("list", { name: "Research process checks requiring action" });
-    expect(within(checks).getByText("plan_execution_alignment")).toBeInTheDocument();
-    expect(within(checks).getByText("Fail")).toBeInTheDocument();
-    expect(within(overview).getByRole("button", { name: "Open Run manifest" })).toBeInTheDocument();
   });
 
   it.each([
@@ -4931,8 +4854,7 @@ function renderAppWithResearchFunnel(
   transitionHistory: NonNullable<RunRecord["graph"]["transitionHistory"]> = [],
   lastAppliedTransition?: NonNullable<RunRecord["graph"]["lastAppliedTransition"]>,
   evidenceAdequacy?: RunJobProjection["evidence_adequacy"],
-  reviewAssurance?: RunJobProjection["review_assurance"],
-  researchProcess?: RunJobProjection["research_process"]
+  reviewAssurance?: RunJobProjection["review_assurance"]
 ): void {
   const funnel: ResearchFunnelProjection = {
     research_mode: "topic_discovery",
@@ -5082,8 +5004,7 @@ function renderAppWithResearchFunnel(
             research_funnel: funnel,
             evidence_readiness: evidenceReadiness,
             evidence_adequacy: evidenceAdequacy,
-            review_assurance: reviewAssurance,
-            research_process: researchProcess
+            review_assurance: reviewAssurance
           }],
           top_failures: []
         },

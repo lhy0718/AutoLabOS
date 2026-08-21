@@ -442,9 +442,7 @@ export function buildReviewReportArtifact(
   );
   const blockingIssues = findings.filter((finding) => finding.severity === "blocker");
   const nonBlockingIssues = findings.filter((finding) => finding.severity === "warning");
-  const repairTargets = findings
-    .filter((finding) => finding.code !== "terminal_evidence_blocked")
-    .map(mapFindingToRepairTarget);
+  const repairTargets = findings.map(mapFindingToRepairTarget);
   return {
     ...baseArtifact("ReviewReport", "research:review", {
       sourceMode: "governance_artifact",

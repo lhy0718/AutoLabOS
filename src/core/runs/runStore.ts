@@ -125,6 +125,7 @@ export class RunStore {
       throw new Error("delegated_run_lineage_invalid");
     }
     return this.withRunIndex(async (index) => {
+      const ts = nowIso();
       const id = deterministicId || randomUUID();
       const storedSummary = index.getRun(id);
       if (storedSummary) {
@@ -136,9 +137,8 @@ export class RunStore {
         return existing;
       }
       const graph = createDefaultGraphState(this.options.nodeOptionPackageName);
-      const ts = nowIso();
 
-      const run = normalizeRunRecord({
+      const run: RunRecord = {
         version: 3,
         workflowVersion: 3,
         id,
@@ -148,6 +148,7 @@ export class RunStore {
         objectiveMetric: input.objectiveMetric,
         status: "pending",
         currentNode: graph.currentNode,
+        latestSummary: undefined,
         nodeThreads: {},
         createdAt: ts,
         updatedAt: ts,
@@ -163,7 +164,7 @@ export class RunStore {
           longTermPath: `.autolabos/runs/${id}/memory/long_term.jsonl`,
           episodePath: `.autolabos/runs/${id}/memory/episodes.jsonl`
         }
-      });
+      };
 
       await this.ensureRunDirectory(run.id);
       index.upsertRun(projectRunRecord(run));
@@ -464,31 +465,6 @@ export class RunStore {
     ]);
     if (latestTimestamp) {
       next.updatedAt = latestTimestamp;
-    }
-
-    if (next.executionRole === "delegated_once") {
-      const execution = this.getPromotionStore().getExecutionState(next.id);
-      if (execution?.status === "failed" || execution?.status === "canceled") {
-        const detail = execution.terminalDetail
-          || `delegated promotion ${execution.status}`;
-        next = {
-          ...next,
-          status: "failed",
-          latestSummary: `Delegated execution blocked: ${detail}`,
-          graph: {
-            ...next.graph,
-            nodeStates: {
-              ...next.graph.nodeStates,
-              [next.currentNode]: {
-                ...next.graph.nodeStates[next.currentNode],
-                status: "failed",
-                updatedAt: execution.terminalAt || next.updatedAt,
-                lastError: detail
-              }
-            }
-          }
-        };
-      }
     }
 
     return next;

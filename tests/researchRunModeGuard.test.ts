@@ -37,7 +37,6 @@ import {
   TOPIC_PROBE_FIXTURE_CANDIDATE_IDS,
   buildTopicProbePortfolioFixture
 } from "./support/topicProbePortfolioFixture.js";
-import { buildVenueViabilityReport } from "../src/core/venueViability.js";
 
 const TOPIC_DISCOVERY_BRIEF = [
   "# Research Brief",
@@ -336,16 +335,6 @@ describe("research run mode guard", () => {
       "successor_followup_handoff_missing"
     ],
     [
-      "outcome gate",
-      TOPIC_PROBE_SUCCESSOR_ARTIFACT_PATHS.outcomeGate,
-      "successor_followup_outcome_gate_missing"
-    ],
-    [
-      "venue viability report",
-      TOPIC_PROBE_SUCCESSOR_ARTIFACT_PATHS.venueViability,
-      "successor_followup_venue_viability_missing"
-    ],
-    [
       "lineage manifest",
       TOPIC_PROBE_SUCCESSOR_LINEAGE_MANIFEST_RELATIVE_PATH,
       "successor_followup_lineage_manifest_missing"
@@ -394,39 +383,6 @@ describe("research run mode guard", () => {
     expect(result.reasons).toContain(
       "successor_followup_source_candidate_file_hash_mismatch"
     );
-  });
-
-  it("fails closed when the child outcome gate is self-rehashed with a different disposition", async () => {
-    const fixture = await createConfirmatoryFixture("outcome-gate-mutation");
-    const outcomeGatePath = path.join(
-      fixture.runDir,
-      TOPIC_PROBE_SUCCESSOR_ARTIFACT_PATHS.outcomeGate
-    );
-    const outcomeGate = JSON.parse(
-      await fs.readFile(outcomeGatePath, "utf8")
-    ) as Record<string, unknown>;
-    const { content_sha256: _oldHash, ...payload } = outcomeGate;
-    const changedPayload = {
-      ...payload,
-      disposition: "repeat_probe"
-    };
-    await writeFixtureFile(
-      fixture.runDir,
-      TOPIC_PROBE_SUCCESSOR_ARTIFACT_PATHS.outcomeGate,
-      serializeJson({
-        ...changedPayload,
-        content_sha256: hashCanonical(changedPayload)
-      })
-    );
-
-    const result = await fixture.resolve();
-
-    expect(result.paperDraftingAllowed).toBe(false);
-    expect(result.reasons).toEqual(expect.arrayContaining([
-      "successor_followup_outcome_gate_file_hash_mismatch",
-      "successor_followup_outcome_gate_manifest_content_hash_mismatch",
-      "successor_followup_outcome_gate_invalid:topic_probe_outcome_gate_disposition_mismatch"
-    ]));
   });
 
   it("fails closed when the source contract no longer matches the promotion receipt", async () => {
@@ -597,26 +553,6 @@ async function createConfirmatoryFixture(label: string) {
     outcome,
     handoff
   });
-  const outcomeGatePayload = {
-    schema_version: 1 as const,
-    artifact_kind: "topic_probe_outcome_gate" as const,
-    run_id: parentRunId,
-    research_cycle: parentResearchCycle,
-    status: "decided" as const,
-    disposition: outcome.disposition,
-    outcome_content_sha256: outcome.content_sha256,
-    reason_codes: [...outcome.reason_codes],
-    venue_viability_report_contract_version: 1 as const
-  };
-  const outcomeGate = {
-    ...outcomeGatePayload,
-    content_sha256: hashCanonical(outcomeGatePayload)
-  };
-  const venueViability = buildVenueViabilityReport({
-    candidate,
-    contract,
-    outcome
-  });
   const brief = handoff.research_brief_markdown;
   const manifest = buildTopicProbeSuccessorLineageManifest({
     relation: "topic_probe_confirmatory",
@@ -636,8 +572,6 @@ async function createConfirmatoryFixture(label: string) {
     sourcePortfolio: lineageSource(portfolio),
     handoff: lineageSource(handoff),
     boundedOutcome: lineageSource(outcome),
-    outcomeGate: lineageSource(outcomeGate),
-    venueViability: lineageSource(venueViability),
     reviewGate: lineageSource(gate)
   });
   const manifestRaw = serializeTopicProbeSuccessorLineageManifest(manifest);
@@ -649,8 +583,6 @@ async function createConfirmatoryFixture(label: string) {
     parentRun,
     childRunId: fixture.runId,
     handoff,
-    outcomeGate,
-    venueViability,
     gate,
     lineageManifest: manifest,
     lineageManifestRaw: manifestRaw
@@ -669,8 +601,6 @@ async function createConfirmatoryFixture(label: string) {
     [TOPIC_PROBE_SUCCESSOR_ARTIFACT_PATHS.sourcePortfolio, serializeJson(portfolio)],
     [TOPIC_PROBE_SUCCESSOR_ARTIFACT_PATHS.handoff, serializeJson(handoff)],
     [TOPIC_PROBE_SUCCESSOR_ARTIFACT_PATHS.boundedOutcome, serializeJson(outcome)],
-    [TOPIC_PROBE_SUCCESSOR_ARTIFACT_PATHS.outcomeGate, serializeJson(outcomeGate)],
-    [TOPIC_PROBE_SUCCESSOR_ARTIFACT_PATHS.venueViability, serializeJson(venueViability)],
     [TOPIC_PROBE_SUCCESSOR_ARTIFACT_PATHS.reviewGate, serializeJson(gate)],
     [TOPIC_PROBE_SUCCESSOR_ARTIFACT_PATHS.receipt, receiptRaw],
     [TOPIC_PROBE_SUCCESSOR_LINEAGE_MANIFEST_RELATIVE_PATH, manifestRaw]

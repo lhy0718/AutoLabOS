@@ -30,7 +30,6 @@ Workflow-native discovery emits a separate artifact class:
 - `TopicPortfolio`
 - `TopicProbeDecision`
 - `ActiveTopicProbeContract`
-- `VenueViabilityReport`
 
 `ModelReviewBundle` is a review sidecar. `PluginDependencyReport` is an
 operational artifact and cannot substitute for research evidence.
@@ -57,7 +56,6 @@ The standalone AutoLabOS TUI/web workflow remains a reference implementation and
    - Freeze the active candidate into `ResultsPlanV2.primary_comparison_id` and `ResultsPlanV2.primary_effect_criterion`. Bind the exact subject/reference comparison to the raw metric, unit/scale semantics, direction, and inclusive/exclusive threshold. Preserve this binding through `ExperimentContract`, analysis, review, and writing; do not promote a merely favorable but sub-threshold delta.
    - The discovery intent ends at closed-chain probe authorization after that single-candidate handoff succeeds.
    - Probe authorization permits only a `bounded_probe` in the downstream workflow. Probe output is screening evidence, not paper claim evidence. A bounded probe is not final topic selection, research completion, or paper readiness.
-   - After a valid bounded-probe outcome, require a recomputable `VenueViabilityReport` scoped to the active candidate. Keep top-tier readiness `blocked` or `unresolved`, report confirmatory candidacy separately, and preserve `top_tier_ready=false`, `acceptance_likelihood_assessed=false`, and `current_evidence_ceiling=screening_only`. The report cannot authorize a transition, but `confirmatory_candidacy=unsupported` must veto a stale confirmatory route.
    - A failed authorization backtracks to `generate_hypotheses`; it does not create a new top-level node or bypass the fixed workflow.
 3. For executable CLI intent work, select the matching contract.
    - `research:new`: create or repair a governed research brief with objective metric, baseline/comparator, evidence floor, disallowed shortcuts, and failure conditions. For `topic_discovery`, encode these as selection rules and admissibility boundaries rather than pretending a final candidate contract already exists.

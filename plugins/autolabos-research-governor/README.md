@@ -173,15 +173,6 @@ nonzero until every required item passes.
   all remaining authorized candidates as `deferred`, and marks execution as a
   `bounded_probe` whose output is not paper claim evidence.
 
-## Projection Artifact Contract
-
-- `VenueViabilityReport`: a deterministic, active-candidate projection of a
-  validated bounded-probe outcome. It keeps the evidence ceiling at
-  `screening_only`, cannot assess acceptance likelihood, and has no transition
-  authority independent of the outcome and follow-up handoff. It cannot
-  authorize confirmation, but an `unsupported` candidacy vetoes a stale
-  confirmatory route.
-
 ## Sidecar And Operational Artifacts
 
 - `ModelReviewBundle` is the exact-gate-bound model-review sidecar.

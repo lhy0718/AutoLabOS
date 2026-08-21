@@ -72,21 +72,6 @@ describe("public source snapshot", () => {
     await expect(readFile(path.join(outDir, "notes.txt"), "utf8")).rejects.toMatchObject({ code: "ENOENT" });
   });
 
-  it("rejects private research artifacts without retaining a partial snapshot", async () => {
-    const fixture = await createRepositoryFixture({
-      extraFile: {
-        path: ["docs", "research", "private-candidate.json"].join("/"),
-        content: "{}\n"
-      }
-    });
-    const outDir = path.join(fixture.root, "private-research-output");
-
-    await expect(exportPublicSourceSnapshot({ cwd: fixture.repo, outDir }))
-      .rejects.toThrow("private_research_artifact");
-    await expect(readFile(path.join(outDir, "README.md"), "utf8"))
-      .rejects.toMatchObject({ code: "ENOENT" });
-  });
-
   it("rejects non-placeholder credential assignments", async () => {
     const assignment = ["SERVICE_ACCESS", "TOKEN=production-value"].join("_");
     const fixture = await createRepositoryFixture({

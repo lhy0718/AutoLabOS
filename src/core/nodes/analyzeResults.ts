@@ -63,7 +63,6 @@ import { evaluateBriefEvidenceAgainstResults } from "../analysis/briefEvidenceVa
 import { parseResearchGapEvidenceRows } from "../analysis/researchGapEvidenceChain.js";
 import { parseMarkdownRunBriefSections } from "../runs/runBriefParser.js";
 import { resolveResearchRunModeGuard } from "../runs/researchRunModeGuard.js";
-import { withTopicProbePromotionSourceLock } from "../topicProbeFollowupRun.js";
 import { buildRunOperatorStatus } from "../runs/runStatus.js";
 import { buildRunCompletenessChecklist } from "../runs/runCompletenessChecklist.js";
 import { buildBaselineComparisonSurface } from "../baselineComparisonSurface.js";
@@ -107,12 +106,6 @@ import {
   type TopicPortfolio
 } from "../researchFunnel.js";
 import type { ActiveTopicProbeContract } from "../activeTopicProbeContract.js";
-import {
-  buildVenueViabilityReport,
-  validateVenueViabilityReport,
-  VENUE_VIABILITY_REPORT_RELATIVE_PATH,
-  type VenueViabilityReport
-} from "../venueViability.js";
 import {
   buildTopicMemoryDatabasePath,
   TopicMemoryStore
@@ -581,10 +574,6 @@ export function createAnalyzeResultsNode(deps: NodeExecutionDeps): GraphNodeHand
           "analyze_results.topic_probe_outcome_gate",
           topicProbeOutcomeState.gate
         );
-        await runContextMemory.put(
-          "analyze_results.venue_viability",
-          topicProbeOutcomeState.venueViability || null
-        );
         deps.eventStream.emit({
           type: "OBS_RECEIVED",
           runId: run.id,
@@ -848,9 +837,6 @@ export function createAnalyzeResultsNode(deps: NodeExecutionDeps): GraphNodeHand
                 ...(topicProbeOutcomeState.outcomePath
                   ? [{ label: "Topic probe outcome", path: TOPIC_PROBE_OUTCOME_RELATIVE_PATH }]
                   : []),
-                ...(topicProbeOutcomeState.venueViabilityPath
-                  ? [{ label: "Venue viability", path: VENUE_VIABILITY_REPORT_RELATIVE_PATH }]
-                  : []),
                 ...(topicProbeOutcomeState.topicMemoryUpdatePath
                   ? [{ label: "Topic memory update", path: "analysis/topic_memory_update.json" }]
                   : [])
@@ -947,13 +933,6 @@ export function createAnalyzeResultsNode(deps: NodeExecutionDeps): GraphNodeHand
               topicProbeOutcomeState?.outcomePath
               || path.join(process.cwd(), ".autolabos", "runs", run.id, TOPIC_PROBE_OUTCOME_RELATIVE_PATH),
             targetRelativePath: "topic_probe_outcome.json",
-            optional: true
-          },
-          {
-            sourcePath:
-              topicProbeOutcomeState?.venueViabilityPath
-              || path.join(process.cwd(), ".autolabos", "runs", run.id, VENUE_VIABILITY_REPORT_RELATIVE_PATH),
-            targetRelativePath: "venue_viability.json",
             optional: true
           },
           {
@@ -1115,7 +1094,6 @@ interface TopicProbeOutcomeGateArtifact {
   disposition: TopicProbeOutcomeDecision["disposition"] | null;
   outcome_content_sha256: string | null;
   reason_codes: string[];
-  venue_viability_report_contract_version?: 1;
   content_sha256: string;
 }
 
@@ -1126,8 +1104,6 @@ interface TopicProbeOutcomeAnalysisState {
   gate: TopicProbeOutcomeGateArtifact;
   gatePath: string;
   outcomePath?: string;
-  venueViability?: VenueViabilityReport;
-  venueViabilityPath?: string;
   topicMemoryUpdatePath?: string;
   completionFailure?: TopicProbeOutcomeCompletionFailure;
 }
@@ -1142,22 +1118,6 @@ async function evaluateAndPersistTopicProbeOutcome(
   report: AnalysisReport,
   evidenceAdequacyAuthorization: EvidenceAdequacyAuthorization | undefined
 ): Promise<TopicProbeOutcomeAnalysisState> {
-  return withTopicProbePromotionSourceLock({
-    workspaceRoot: process.cwd(),
-    runId: run.id,
-    operation: () => evaluateAndPersistTopicProbeOutcomeUnlocked(
-      run,
-      report,
-      evidenceAdequacyAuthorization
-    )
-  });
-}
-
-async function evaluateAndPersistTopicProbeOutcomeUnlocked(
-  run: RunRecord,
-  report: AnalysisReport,
-  evidenceAdequacyAuthorization: EvidenceAdequacyAuthorization | undefined
-): Promise<TopicProbeOutcomeAnalysisState> {
   const sourceValidation = await loadTopicProbeOutcomeArtifacts({
     workspaceRoot: process.cwd(),
     runId: run.id,
@@ -1168,8 +1128,6 @@ async function evaluateAndPersistTopicProbeOutcomeUnlocked(
   const reasons = [...sourceValidation.reasons];
   let decision: TopicProbeOutcomeDecision | undefined;
   let outcomePath: string | undefined;
-  let venueViability: VenueViabilityReport | undefined;
-  let venueViabilityPath: string | undefined;
   let topicMemoryUpdatePath: string | undefined;
   let completionFailure: TopicProbeOutcomeCompletionFailure | undefined;
 
@@ -1195,46 +1153,6 @@ async function evaluateAndPersistTopicProbeOutcomeUnlocked(
       });
       if (verified.valid && verified.decision) {
         decision = verified.decision;
-        if (!verified.portfolio || !verified.contract) {
-          throw new Error("verified_topic_candidate_context_missing");
-        }
-        const matchingCandidates = verified.portfolio.candidates.filter(
-          (candidate) =>
-            candidate.source_candidate_id === verified.contract?.candidate_id
-            && candidate.topic_id === verified.contract?.topic_id
-        );
-        if (matchingCandidates.length !== 1) {
-          throw new Error(
-            matchingCandidates.length === 0
-              ? "verified_topic_candidate_missing"
-              : "verified_topic_candidate_ambiguous"
-          );
-        }
-        const builtVenueViability = buildVenueViabilityReport({
-          candidate: matchingCandidates[0],
-          contract: verified.contract,
-          outcome: decision
-        });
-        const venueValidation = validateVenueViabilityReport(
-          JSON.stringify(builtVenueViability),
-          {
-            candidate: matchingCandidates[0],
-            contract: verified.contract,
-            outcome: decision
-          }
-        );
-        if (!venueValidation.valid) {
-          throw new Error(
-            "venue_viability_self_validation_failed:"
-            + venueValidation.reasons.join(",")
-          );
-        }
-        venueViability = builtVenueViability;
-        venueViabilityPath = await writeRunArtifact(
-          run,
-          VENUE_VIABILITY_REPORT_RELATIVE_PATH,
-          JSON.stringify(venueViability, null, 2) + "\n"
-        );
         if (decision.disposition === "reject_candidate") {
           try {
             if (!verified.portfolio || !verified.contract) {
@@ -1275,10 +1193,7 @@ async function evaluateAndPersistTopicProbeOutcomeUnlocked(
       ? [...(decision?.reason_codes || [])]
       : uniqueReasons.length > 0
         ? uniqueReasons
-        : ["topic_probe_outcome_unavailable"],
-    ...(venueViabilityPath
-      ? { venue_viability_report_contract_version: 1 as const }
-      : {})
+        : ["topic_probe_outcome_unavailable"]
   };
   const gate: TopicProbeOutcomeGateArtifact = {
     ...gatePayload,
@@ -1297,8 +1212,6 @@ async function evaluateAndPersistTopicProbeOutcomeUnlocked(
     gate,
     gatePath,
     outcomePath,
-    venueViability,
-    venueViabilityPath,
     topicMemoryUpdatePath,
     completionFailure
   };

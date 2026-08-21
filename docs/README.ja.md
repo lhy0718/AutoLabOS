@@ -331,8 +331,8 @@ LLM は `TASK.md` により `TARGET_FILE + unified diff` だけを返すよう�
 `autolabos evolve` は `.codex` と `node-prompts` を対象に bounded な mutation-and-evaluation loop を実行します。
 
 - `--max-cycles`, `--target skills|prompts|all`, `--dry-run` をサポート
-- eval harness と `run_status.research_process` から component score と artifact-backed process check を読み取り、readiness score を科学的 gate として扱わない
-- bounded な prompt/skill 改善を提案し、validation を再実行して cycle 間の process blocker を比較する
+- run fitness は `paper_readiness.overall_score` から読み取る
+- prompts と skills を mutation し、validation を実行し、cycle 間で fitness を比較する
 - regression が出た場合は最後の good git tag を基準に `.codex` と `node-prompts` を復元する
 
 これは self-improvement path ですが、制約のない repo-wide rewrite path ではありません。

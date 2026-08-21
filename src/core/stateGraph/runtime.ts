@@ -44,10 +44,6 @@ import type { CodexOAuthCompletionErrorCode } from "../../integrations/codex/oau
 
 export class StateGraphRuntime {
   private governancePolicy?: GovernancePolicy;
-  private readonly delegatedExecutionCredentials = new Map<
-    string,
-    { ownerId: string; fenceToken: number; leaseDurationMs: number }
-  >();
 
   constructor(
     private readonly runStore: RunStore,
@@ -72,41 +68,9 @@ export class StateGraphRuntime {
     this.options.approvalMode = mode;
   }
 
-  authorizeDelegatedExecution(credential: {
-    childRunId: string;
-    ownerId: string;
-    fenceToken: number;
-    leaseDurationMs: number;
-  }): void {
-    const state = this.runStore.getPromotionStore().getExecutionState(
-      credential.childRunId
-    );
-    if (
-      state?.status !== "running"
-      || state.ownerId !== credential.ownerId
-      || state.fenceToken !== credential.fenceToken
-      || !Number.isFinite(credential.leaseDurationMs)
-      || credential.leaseDurationMs <= 0
-      || typeof state.leaseExpiresAtMs !== "number"
-      || state.leaseExpiresAtMs <= Date.now()
-    ) {
-      throw new Error("delegated_run_execution_credential_invalid");
-    }
-    this.delegatedExecutionCredentials.set(credential.childRunId, {
-      ownerId: credential.ownerId,
-      fenceToken: credential.fenceToken,
-      leaseDurationMs: credential.leaseDurationMs
-    });
-  }
-
-  revokeDelegatedExecution(runId: string): void {
-    this.delegatedExecutionCredentials.delete(runId);
-  }
-
   async start(runId: string): Promise<RunRecord> {
     const run = await this.getRunOrThrow(runId);
     assertRunHasNoDelegatedSuccessor(run, "start");
-    this.assertDelegatedExecutionAuthorized(run, "start");
     if (!run.currentNode) {
       run.currentNode = GRAPH_NODE_ORDER[0];
       run.graph.currentNode = run.currentNode;
@@ -125,7 +89,6 @@ export class StateGraphRuntime {
   async resume(runId: string, checkpointSeq?: number): Promise<RunRecord> {
     const current = await this.getRunOrThrow(runId);
     assertRunHasNoDelegatedSuccessor(current, "resume");
-    this.assertDelegatedExecutionAuthorized(current, "resume");
     const checkpoint = await this.checkpointStore.load(runId, checkpointSeq);
     if (checkpoint) {
       const restored = structuredClone(checkpoint.runSnapshot);
@@ -189,7 +152,6 @@ export class StateGraphRuntime {
     this.throwIfAborted(abortSignal);
     let run = await this.getRunOrThrow(runId);
     assertRunHasNoDelegatedSuccessor(run, "step");
-    this.assertDelegatedExecutionAuthorized(run, "step");
     run.graph.currentNode = run.currentNode;
     const budgetPaused = await this.pauseForBudgetGuardIfNeeded(run);
     if (budgetPaused) {
@@ -244,7 +206,6 @@ export class StateGraphRuntime {
     let invokedNode = false;
     try {
       this.throwIfAborted(abortSignal);
-      this.assertDelegatedExecutionAuthorized(run, "node_execute");
       invokedNode = true;
       const result = await this.nodeRegistry.get(node).execute({
         run,
@@ -255,8 +216,6 @@ export class StateGraphRuntime {
       // Once a node returns, its result becomes the source of truth even if a
       // late Ctrl-C arrives before runtime persistence finishes.
       run = await this.getRunOrThrow(run.id);
-      this.refreshDelegatedExecutionAuthorization(run, "node_commit");
-      this.assertDelegatedExecutionAuthorized(run, "node_commit");
       const usageDelta = this.buildUsageDeltaFromResult(result, started);
 
       if (result.status === "failure") {
@@ -329,12 +288,8 @@ export class StateGraphRuntime {
 
       return this.getRunOrThrow(run.id);
     } catch (error) {
-      if (isDelegatedExecutionAuthorizationError(error)) {
-        throw error;
-      }
       if (isAbortError(error)) {
         run = await this.getRunOrThrow(run.id);
-        this.refreshDelegatedExecutionAuthorization(run, "abort_commit");
         if (invokedNode) {
           this.applyUsageDelta(run, node, this.buildUsageDeltaForException(started));
         }
@@ -351,7 +306,6 @@ export class StateGraphRuntime {
       }
       const message = error instanceof Error ? error.message : String(error);
       run = await this.getRunOrThrow(run.id);
-      this.refreshDelegatedExecutionAuthorization(run, "failure_commit");
       return this.handleFailure(
         run,
         node,
@@ -371,7 +325,6 @@ export class StateGraphRuntime {
   ): Promise<RunRecord> {
     let run = await this.getRunOrThrow(runId);
     assertRunHasNoDelegatedSuccessor(run, "run_until_pause");
-    this.assertDelegatedExecutionAuthorized(run, "run_until_pause");
     const budgetPaused = await this.pauseForBudgetGuardIfNeeded(run);
     if (budgetPaused) {
       return budgetPaused;
@@ -551,7 +504,6 @@ export class StateGraphRuntime {
   ): Promise<RunRecord> {
     const run = await this.getRunOrThrow(runId);
     assertRunHasNoDelegatedSuccessor(run, "approve");
-    this.assertDelegatedExecutionAuthorized(run, "approve");
     const node = run.currentNode;
     const state = run.graph.nodeStates[node];
 
@@ -640,7 +592,6 @@ export class StateGraphRuntime {
   async applyPendingTransition(runId: string): Promise<RunRecord> {
     const run = await this.getRunOrThrow(runId);
     assertRunHasNoDelegatedSuccessor(run, "apply_transition");
-    this.assertDelegatedExecutionAuthorized(run, "apply_transition");
     const recommendation = run.graph.pendingTransition;
     if (!recommendation) {
       return run;
@@ -731,7 +682,6 @@ export class StateGraphRuntime {
   async retryNode(runId: string, node?: GraphNodeId): Promise<RunRecord> {
     const run = await this.getRunOrThrow(runId);
     assertRunHasNoDelegatedSuccessor(run, "retry");
-    this.assertDelegatedExecutionAuthorized(run, "retry");
     const target = node || run.currentNode;
     const maxAttempts = Math.max(1, run.graph.retryPolicy.maxAttemptsPerNode);
     const nextAttempt = Math.min((run.graph.retryCounters[target] ?? 0) + 1, maxAttempts);
@@ -801,7 +751,6 @@ export class StateGraphRuntime {
   ): Promise<RunRecord> {
     const run = await this.getRunOrThrow(runId);
     assertRunHasNoDelegatedSuccessor(run, "jump");
-    this.assertDelegatedExecutionAuthorized(run, "jump");
     this.applyJumpState(run, targetNode, mode, reason, options);
 
     this.syncLatestSummary(run, targetNode);
@@ -1709,57 +1658,6 @@ export class StateGraphRuntime {
         recommendation.reason?.startsWith("governance:")
     );
   }
-
-  private assertDelegatedExecutionAuthorized(
-    run: RunRecord,
-    action: string
-  ): void {
-    if (run.executionRole !== "delegated_once") return;
-    const state = this.runStore.getPromotionStore().getExecutionState(run.id);
-    const credential = this.delegatedExecutionCredentials.get(run.id);
-    if (
-      state?.status === "running"
-      && credential
-      && credential.ownerId === state.ownerId
-      && credential.fenceToken === state.fenceToken
-      && typeof state.leaseExpiresAtMs === "number"
-      && state.leaseExpiresAtMs > Date.now()
-    ) return;
-    throw new Error(
-      `delegated_run_execution_not_authorized:${action}:${
-        state?.status === "running"
-          ? state.leaseExpiresAtMs && state.leaseExpiresAtMs <= Date.now()
-            ? "expired"
-            : "credential_mismatch"
-          : state?.status || "missing"
-      }`
-    );
-  }
-
-  private refreshDelegatedExecutionAuthorization(
-    run: RunRecord,
-    action: string
-  ): void {
-    if (run.executionRole !== "delegated_once") return;
-    const credential = this.delegatedExecutionCredentials.get(run.id);
-    if (!credential) {
-      throw new Error(
-        `delegated_run_execution_not_authorized:${action}:credential_missing`
-      );
-    }
-    try {
-      this.runStore.getPromotionStore().heartbeat({
-        childRunId: run.id,
-        ownerId: credential.ownerId,
-        fenceToken: credential.fenceToken,
-        leaseDurationMs: credential.leaseDurationMs
-      });
-    } catch {
-      throw new Error(
-        `delegated_run_execution_not_authorized:${action}:fence_lost`
-      );
-    }
-  }
 }
 
 function isInternalTopicDiscoveryLaneRequest(
@@ -2004,11 +1902,6 @@ function isAbortError(error: unknown): boolean {
   }
   const lower = error.message.toLowerCase();
   return lower.includes("aborted") || lower.includes("abort");
-}
-
-function isDelegatedExecutionAuthorizationError(error: unknown): boolean {
-  return error instanceof Error
-    && error.message.startsWith("delegated_run_execution_not_authorized:");
 }
 
 function isHybridAutoApproved(signal: ApprovalSignal | undefined): boolean {

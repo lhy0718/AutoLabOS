@@ -170,8 +170,7 @@ describe("eval harness", () => {
     expect(first?.statuses.baseline_comparison).toBe("available");
     expect(first?.metrics.changed_file_count).toBe(2);
     expect(first?.scores.overall).toBeGreaterThan(0.9);
-    expect(first?.autonomy.evidence_gates_preserved).toBe(false);
-    expect(first?.autonomy.process_evaluation_status).not.toBe("pass");
+    expect(first?.autonomy.evidence_gates_preserved).toBe(true);
     expect(first?.autonomy.fitness_signal).toBe(first?.scores.overall);
 
     expect(second?.statuses.implement).toBe("deferred");
@@ -194,7 +193,7 @@ describe("eval harness", () => {
     expect(summary).toContain("Eval harness completed for 3 run(s).");
     expect(summary).toContain("Implementation pass rate: 33.3%");
     expect(summary).toContain("Policy-blocked run rate: 66.7%");
-    expect(summary).toContain("Research process pass rate:");
+    expect(summary).toContain("Autonomy fitness signal:");
     expect(summary).toContain("Top policy rules: network_fetch_disabled (1), remote_script_pipe (1)");
 
     const written = await writeEvalHarnessReport(report, path.join(workspace, "outputs", "eval-harness", "latest.json"));

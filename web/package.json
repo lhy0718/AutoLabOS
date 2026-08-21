@@ -22,9 +22,5 @@
     "typescript": "^5.8.2",
     "vite": "^6.4.3",
     "vitest": "^3.2.7"
-  },
-  "allowScripts": {
-    "esbuild@0.25.12": true,
-    "fsevents@2.3.3": true
   }
 }

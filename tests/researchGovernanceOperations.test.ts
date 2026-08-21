@@ -779,20 +779,6 @@ describe("research governance operations", () => {
     }));
     expect(inspection.checked_files).toBe(inspection.expected_files);
     expect(inspection.checked_files).toBeGreaterThan(0);
-    const packedResultTable = path.join(
-      packRoot,
-      "artifacts",
-      "evidence",
-      "outputs",
-      "governance",
-      "audit",
-      "_external-intake",
-      "run-artifacts",
-      "result_table.json"
-    );
-    expect(JSON.parse(await readFile(packedResultTable, "utf8"))).toEqual([
-      { metric: "primary_score", baseline: 0.8, comparator: 0.2, delta: -0.6, direction: "higher_better" }
-    ]);
   });
 
   it("fails bundle verification on changed bytes and unbound files", async () => {
@@ -840,7 +826,6 @@ describe("research governance operations", () => {
     const packRoot = await writeGovernancePack(workspace);
     const manifestPath = path.join(packRoot, "paper-readiness-bundle.json");
     const manifest = JSON.parse(await readFile(manifestPath, "utf8"));
-    const duplicateIndex = manifest.files.length;
     manifest.files.push({ ...manifest.files[0] });
     await writeJson(manifestPath, manifest);
 
@@ -850,7 +835,7 @@ describe("research governance operations", () => {
     expect(inspection.closed_inventory).toBe(false);
     expect(inspection.issues).toContainEqual(expect.objectContaining({
       code: "manifest_invalid",
-      path: expect.stringContaining(`files[${duplicateIndex}].path`),
+      path: expect.stringContaining("files[13].path"),
       message: expect.stringContaining("unique")
     }));
   });
@@ -1278,9 +1263,6 @@ async function writeA2GovernancePack(workspace: string): Promise<string> {
 async function writeGovernancePack(workspace: string): Promise<string> {
   const external = path.join(workspace, "external-artifacts");
   await mkdir(external, { recursive: true });
-  await writeJson(path.join(external, "result_table.json"), [
-    { metric: "primary_score", baseline: 0.8, comparator: 0.2, delta: -0.6, direction: "higher_better" }
-  ]);
   const gateResult = await runResearchAudit({
     cwd: workspace,
     externalRoot: external,

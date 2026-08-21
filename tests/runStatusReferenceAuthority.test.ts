@@ -27,7 +27,7 @@ afterEach(async () => {
 });
 
 describe("run status reference authority defense", () => {
-  it("does not project paper_ready from an unbound reference gate or non-independent review", async () => {
+  it("does not project paper_ready from an unbound or failing reference gate", async () => {
     workspaceRoot = await fs.mkdtemp(path.join(os.tmpdir(), "run-status-reference-"));
     const run = makeRun("run-reference-authority");
     run.graph.nodeStates.review.status = "completed";
@@ -65,8 +65,8 @@ describe("run status reference authority defense", () => {
       .toBe(false);
 
     await seedEvidenceAdequacy(workspaceRoot, run, "pass");
-    await seedPassingResearchProcessArtifacts(workspaceRoot, run);
     await seedValidNonIndependentReviewAssurance({ workspaceRoot, run });
+    run.graph.checkpointSeq += 2;
     const bound = await buildRunOperatorStatus({ workspaceRoot, run, approvalMode: "minimal" });
     expect(bound.evidence_adequacy.reason_codes).toEqual([]);
     expect(bound.evidence_adequacy).toMatchObject({
@@ -77,12 +77,7 @@ describe("run status reference authority defense", () => {
       trusted: true,
       paper_ready_eligible: true
     });
-    expect(bound.research_process).toMatchObject({
-      status: "blocked",
-      paper_ready_eligible: false
-    });
-    expect(bound.research_process.reason_codes).toContain("independent_validation_not_trusted");
-    expect(bound.paper_ready).toBe(false);
+    expect(bound.paper_ready).toBe(true);
   });
 
   it("prioritizes a pending backtrack over the generic resume-review label", async () => {
@@ -401,44 +396,6 @@ function makePostAnalysisRun(id: string): RunRecord {
   });
   run.graph.nodeStates.run_experiments.status = "completed";
   return run;
-}
-
-async function seedPassingResearchProcessArtifacts(root: string, run: RunRecord): Promise<void> {
-  const runDir = path.join(root, ".autolabos", "runs", run.id);
-  await fs.mkdir(path.join(runDir, "paper"), { recursive: true });
-  const write = (relativePath: string, value: unknown) =>
-    fs.writeFile(path.join(runDir, relativePath), `${JSON.stringify(value, null, 2)}\n`, "utf8");
-  await Promise.all([
-    write("experiment_contract.json", {
-      version: 2,
-      run_id: run.id,
-      created_at: new Date().toISOString(),
-      hypothesis: "A typed handoff changes the primary outcome.",
-      causal_mechanism: "The handoff reduces information loss.",
-      single_change: "Replace one handoff representation.",
-      confounded: false,
-      expected_metric_effect: "Increase the primary measure.",
-      abort_condition: "Abort only on invalid input or resource exhaustion.",
-      keep_or_discard_rule: "Retain every contract-valid execution regardless of effect direction.",
-      baselines: ["reference system"],
-      results_plan: {
-        schema_version: "2.0",
-        required_metrics: [{ id: "metric-primary", label: "Primary measure", direction: "higher_better", unit: "points" }],
-        minimum_series_count: 2,
-        minimum_comparison_count: 1,
-        required_series: [{ id: "reference", role: "baseline" }, { id: "subject", role: "primary" }],
-        required_comparisons: [{ id: "primary_comparison", subject_series_id: "subject", reference_series_id: "reference", metric_id: "metric-primary", scope: { partition: "evaluation" } }],
-        primary_comparison_id: "primary_comparison"
-      }
-    }),
-    write("experiment_portfolio.json", { execution_model: "single_run", primary_trial_group_id: "primary" }),
-    write("run_manifest.json", { run_id: run.id, execution_model: "single_run", portfolio: { primary_trial_group_id: "primary" } }),
-    write("metrics.json", { status: "completed", observations: [{ value: 1 }] }),
-    write("objective_evaluation.json", { status: "met" }),
-    write("run_experiments_verify_report.json", { status: "pass", stage: "success" }),
-    write("result_analysis.json", { primary_comparison_id: "primary_comparison", condition_comparisons: [{ id: "primary_comparison", hypothesis_supported: true }] }),
-    write("paper/claim_evidence_table.json", { claims: [{ claim_id: "claim-1", artifact_refs: ["result_analysis.json"], citation_refs: [] }] })
-  ]);
 }
 
 async function seedEvidenceAdequacy(

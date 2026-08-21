@@ -1,5 +1,4 @@
 import { promises as fs } from "node:fs";
-import { writeFileSync } from "node:fs";
 import { createHash, randomUUID } from "node:crypto";
 import os from "node:os";
 import path from "node:path";
@@ -64,7 +63,6 @@ import {
 } from "../src/core/topicProbeOutcome.js";
 import { buildWorkspaceRunRoot } from "../src/core/runs/runPaths.js";
 import { RunStore } from "../src/core/runs/runStore.js";
-import { buildPromotionParentStateSha256 } from "../src/core/runs/runPromotionStore.js";
 import {
   buildTopicProbeFollowupHandoff,
   TOPIC_PROBE_FOLLOWUP_HANDOFF_RELATIVE_PATH,
@@ -85,7 +83,6 @@ import {
   TOPIC_PROBE_SUCCESSOR_LINEAGE_MANIFEST_RELATIVE_PATH,
   validateTopicProbeSuccessorLineageManifest
 } from "../src/core/runs/topicProbeSuccessorLineage.js";
-import { TOPIC_PROBE_OUTCOME_GATE_RELATIVE_PATH } from "../src/core/runs/researchFunnelProjection.js";
 import { RunContextMemory } from "../src/core/memory/runContextMemory.js";
 import { CheckpointStore } from "../src/core/stateGraph/checkpointStore.js";
 import {
@@ -95,10 +92,6 @@ import {
 import type { PriorAbsorptionEvidenceSeed } from "../src/core/priorAbsorption.js";
 import { buildPassingPriorAbsorptionMatrixFixture } from "./support/priorAbsorptionFixture.js";
 import type { RunSuccessorRelation } from "../src/types.js";
-import {
-  buildVenueViabilityReport,
-  VENUE_VIABILITY_REPORT_RELATIVE_PATH
-} from "../src/core/venueViability.js";
 
 const GENERATED_AT = "2026-01-01T00:00:00.000Z";
 const RESEARCH_CYCLE = 2;
@@ -604,7 +597,7 @@ describe("topicProbeOutcomeArtifacts", () => {
     "creates a deterministic $label with hash-bound receipt and lineage",
     async (route) => {
       const fixture = await createWorkspaceFixture({ route });
-      const { store, parent, handoff, outcomeGate, venueViability, gate } =
+      const { store, parent, handoff, gate } =
         await prepareDelegatingParent(fixture);
 
       expect(fixture.outcome).toMatchObject({
@@ -654,7 +647,7 @@ describe("topicProbeOutcomeArtifacts", () => {
       expect(await store.listRuns()).toHaveLength(2);
 
       expect(receipt).toMatchObject({
-        schema_version: 7,
+        schema_version: 5,
         artifact_kind: "topic_probe_followup_run_receipt",
         relation: route.relation,
         disposition: route.disposition,
@@ -666,8 +659,6 @@ describe("topicProbeOutcomeArtifacts", () => {
         source_candidate_content_sha256:
           fixture.contract.candidate_content_sha256,
         outcome_content_sha256: fixture.outcome.content_sha256,
-        outcome_gate_content_sha256: outcomeGate.content_sha256,
-        venue_viability_content_sha256: venueViability.content_sha256,
         handoff_content_sha256: handoff.content_sha256,
         review_gate_content_sha256: gate.content_sha256,
         source_portfolio_content_sha256: fixture.portfolio.content_sha256,
@@ -729,7 +720,7 @@ describe("topicProbeOutcomeArtifacts", () => {
       expect(lineageValidation).toMatchObject({ valid: true, reasons: [] });
       const lineage = lineageValidation.manifest!;
       expect(lineage).toMatchObject({
-        schema_version: 5,
+        schema_version: 3,
         artifact_kind: "topic_probe_successor_lineage_manifest",
         relation: route.relation,
         disposition: route.disposition,
@@ -773,8 +764,6 @@ describe("topicProbeOutcomeArtifacts", () => {
         lineage.source_portfolio,
         lineage.handoff,
         lineage.bounded_outcome,
-        lineage.outcome_gate,
-        lineage.venue_viability,
         lineage.review_gate
       ]) {
         const raw = await fs.readFile(
@@ -864,169 +853,6 @@ describe("topicProbeOutcomeArtifacts", () => {
     expect(await store.listRuns()).toHaveLength(2);
   });
 
-  it("blocks before reserving or creating a child when the outcome gate is missing", async () => {
-    const fixture = await createWorkspaceFixture();
-    const { store, parent } = await prepareDelegatingParent(fixture);
-    await fs.rm(
-      artifactPath(
-        fixture.workspaceRoot,
-        TOPIC_PROBE_OUTCOME_GATE_RELATIVE_PATH
-      )
-    );
-
-    const result = await new TopicProbeFollowupRunManager(store, {
-      workspaceRoot: fixture.workspaceRoot
-    }).consumePromotedFollowup(parent);
-
-    expect(result.status).toBe("blocked");
-    expect(result.reasons).toContain("topic_probe_followup_outcome_gate_missing");
-    expect(await store.listRuns()).toHaveLength(1);
-    expect(store.getPromotionStore().getByParentRunId(parent.id)).toBeUndefined();
-  });
-
-  it("blocks before reserving or creating a child when the venue report is missing", async () => {
-    const fixture = await createWorkspaceFixture();
-    const { store, parent } = await prepareDelegatingParent(fixture);
-    await fs.rm(
-      artifactPath(
-        fixture.workspaceRoot,
-        VENUE_VIABILITY_REPORT_RELATIVE_PATH
-      )
-    );
-
-    const result = await new TopicProbeFollowupRunManager(store, {
-      workspaceRoot: fixture.workspaceRoot
-    }).consumePromotedFollowup(parent);
-
-    expect(result.status).toBe("blocked");
-    expect(result.reasons).toContain(
-      "topic_probe_followup_venue_viability_missing"
-    );
-    expect(await store.listRuns()).toHaveLength(1);
-    expect(store.getPromotionStore().getByParentRunId(parent.id)).toBeUndefined();
-  });
-
-  it("blocks before reserving or creating a child when the outcome gate is rehashed with a different disposition", async () => {
-    const fixture = await createWorkspaceFixture();
-    const { store, parent, outcomeGate } = await prepareDelegatingParent(fixture);
-    const changedPayload = {
-      ...outcomeGate,
-      disposition: outcomeGate.disposition === "repeat_probe"
-        ? "reject_candidate"
-        : "repeat_probe",
-      content_sha256: undefined
-    };
-    delete changedPayload.content_sha256;
-    const changedGate = {
-      ...changedPayload,
-      content_sha256: hashCanonical(changedPayload)
-    };
-    await writeArtifact(
-      fixture.workspaceRoot,
-      TOPIC_PROBE_OUTCOME_GATE_RELATIVE_PATH,
-      `${JSON.stringify(changedGate, null, 2)}\n`
-    );
-
-    const result = await new TopicProbeFollowupRunManager(store, {
-      workspaceRoot: fixture.workspaceRoot
-    }).consumePromotedFollowup(parent);
-
-    expect(result.status).toBe("blocked");
-    expect(result.reasons).toContain("topic_probe_outcome_gate_disposition_mismatch");
-    expect(await store.listRuns()).toHaveLength(1);
-    expect(store.getPromotionStore().getByParentRunId(parent.id)).toBeUndefined();
-  });
-
-  it("fails the claimed lease when the outcome gate changes after claim but before execution handoff", async () => {
-    const fixture = await createWorkspaceFixture();
-    const { store, parent, outcomeGate } = await prepareDelegatingParent(fixture);
-    let mutated = false;
-    const manager = new TopicProbeFollowupRunManager(store, {
-      workspaceRoot: fixture.workspaceRoot,
-      faultInjector(point) {
-        if (mutated || point !== "after_claim_before_revalidation") return;
-        mutated = true;
-        const changedPayload = {
-          ...outcomeGate,
-          disposition: outcomeGate.disposition === "repeat_probe"
-            ? "reject_candidate"
-            : "repeat_probe"
-        } as Record<string, unknown>;
-        delete changedPayload.content_sha256;
-        writeFileSync(
-          artifactPath(
-            fixture.workspaceRoot,
-            TOPIC_PROBE_OUTCOME_GATE_RELATIVE_PATH
-          ),
-          `${JSON.stringify({
-            ...changedPayload,
-            content_sha256: hashCanonical(changedPayload)
-          }, null, 2)}\n`,
-          "utf8"
-        );
-      }
-    });
-
-    const result = await manager.consumePromotedFollowup(parent);
-
-    expect(result.status).toBe("blocked");
-    expect(result.reasons[0]).toContain(
-      "topic_probe_followup_postclaim_source_invalid"
-    );
-    expect(result.terminalState?.status).toBe("failed");
-    expect(result.executionLease).toBeUndefined();
-    expect(result.childRun?.status).toBe("failed");
-    const persistedChild = result.childRun
-      ? await store.getRun(result.childRun.id)
-      : undefined;
-    expect(persistedChild?.status).toBe("failed");
-    expect(
-      store.getPromotionStore().getExecutionState(result.childRun?.id || "")?.status
-    ).toBe("failed");
-  });
-
-  it("reports an explicit new-cycle boundary for a pre-contract-upgrade reservation", async () => {
-    const fixture = await createWorkspaceFixture();
-    const { store, parent } = await prepareDelegatingParent(fixture);
-    const childRunId = buildTopicProbeFollowupRunId(
-      parent.id,
-      RESEARCH_CYCLE,
-      "topic_probe_confirmatory",
-      fixture.outcome.content_sha256
-    );
-    store.getPromotionStore().reserveOrLoad({
-      parentRunId: parent.id,
-      parentResearchCycle: RESEARCH_CYCLE,
-      relation: "topic_probe_confirmatory",
-      outcomeContentSha256: fixture.outcome.content_sha256,
-      childRunId,
-      receiptContentSha256: "a".repeat(64),
-      receiptJson: JSON.stringify({ schema_version: 5 }),
-      immutablePayloadJson: JSON.stringify({
-        schema_version: 3,
-        artifact_kind: "topic_probe_followup_promotion_payload"
-      }),
-      expectedParentStateSha256: buildPromotionParentStateSha256(parent),
-      expectedCheckpointSeq: parent.graph.checkpointSeq
-    });
-    await fs.unlink(artifactPath(
-      fixture.workspaceRoot,
-      VENUE_VIABILITY_REPORT_RELATIVE_PATH
-    ));
-
-    const result = await new TopicProbeFollowupRunManager(store, {
-      workspaceRoot: fixture.workspaceRoot
-    }).consumePromotedFollowup(parent);
-
-    expect(result).toEqual({
-      status: "blocked",
-      reasons: [
-        "topic_probe_followup_pre_contract_upgrade_reservation_requires_new_research_cycle"
-      ]
-    });
-    expect(await store.listRuns()).toHaveLength(1);
-  });
-
   it("re-reads the latest checkpoint instead of trusting a stale parent object", async () => {
     const fixture = await createWorkspaceFixture();
     const { store, parent, paths } =
@@ -1069,19 +895,6 @@ async function prepareDelegatingParent(fixture: WorkspaceFixture): Promise<{
   parent: Awaited<ReturnType<RunStore["createRun"]>>;
   paths: ReturnType<typeof resolveAppPaths>;
   handoff: ReturnType<typeof buildTopicProbeFollowupHandoff>;
-  outcomeGate: {
-    schema_version: 1;
-    artifact_kind: "topic_probe_outcome_gate";
-    run_id: string;
-    research_cycle: number;
-    status: "decided";
-    disposition: TopicProbeOutcomeDisposition;
-    outcome_content_sha256: string;
-    reason_codes: string[];
-    venue_viability_report_contract_version: 1;
-    content_sha256: string;
-  };
-  venueViability: ReturnType<typeof buildVenueViabilityReport>;
   gate: ReturnType<typeof buildTopicProbeReviewGate>;
 }> {
   process.chdir(fixture.workspaceRoot);
@@ -1123,26 +936,6 @@ async function prepareDelegatingParent(fixture: WorkspaceFixture): Promise<{
     outcome: fixture.outcome,
     candidate
   });
-  const outcomeGatePayload = {
-    schema_version: 1 as const,
-    artifact_kind: "topic_probe_outcome_gate" as const,
-    run_id: parent.id,
-    research_cycle: RESEARCH_CYCLE,
-    status: "decided" as const,
-    disposition: fixture.outcome.disposition,
-    outcome_content_sha256: fixture.outcome.content_sha256,
-    reason_codes: [...fixture.outcome.reason_codes],
-    venue_viability_report_contract_version: 1 as const
-  };
-  const outcomeGate = {
-    ...outcomeGatePayload,
-    content_sha256: hashCanonical(outcomeGatePayload)
-  };
-  const venueViability = buildVenueViabilityReport({
-    candidate,
-    contract: fixture.contract,
-    outcome: fixture.outcome
-  });
   const gate = buildTopicProbeReviewGate({
     runId: parent.id,
     researchCycle: RESEARCH_CYCLE,
@@ -1154,16 +947,6 @@ async function prepareDelegatingParent(fixture: WorkspaceFixture): Promise<{
       fixture.workspaceRoot,
       "result_analysis.json",
       JSON.stringify(fixture.report, null, 2)
-    ),
-    writeArtifact(
-      fixture.workspaceRoot,
-      TOPIC_PROBE_OUTCOME_GATE_RELATIVE_PATH,
-      `${JSON.stringify(outcomeGate, null, 2)}\n`
-    ),
-    writeArtifact(
-      fixture.workspaceRoot,
-      VENUE_VIABILITY_REPORT_RELATIVE_PATH,
-      `${JSON.stringify(venueViability, null, 2)}\n`
     ),
     writeArtifact(
       fixture.workspaceRoot,
@@ -1180,15 +963,7 @@ async function prepareDelegatingParent(fixture: WorkspaceFixture): Promise<{
   if (!persisted) {
     throw new Error("delegating parent was not persisted");
   }
-  return {
-    store,
-    parent: persisted,
-    paths,
-    handoff,
-    outcomeGate,
-    venueViability,
-    gate
-  };
+  return { store, parent: persisted, paths, handoff, gate };
 }
 
 async function createWorkspaceFixture(

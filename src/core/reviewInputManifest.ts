@@ -36,7 +36,6 @@ interface ReviewInputDefinition {
   media_type: string;
   source_kind: ReviewInputSourceKind;
   always_required?: boolean;
-  pre_projection_optional?: boolean;
 }
 
 export interface ReviewInputManifestEntry {
@@ -50,7 +49,7 @@ export interface ReviewInputManifestEntry {
 }
 
 export interface ReviewInputManifest {
-  schema_version: 1 | 2;
+  schema_version: 1;
   artifact_kind: "review_input_manifest";
   run_id: string;
   research_cycle: number;
@@ -165,12 +164,6 @@ const REVIEW_INPUT_DEFINITIONS = ([
   { path: "analysis/risk_signals.json", media_type: "application/json", source_kind: "risk_signal" },
   { path: "figure_audit/figure_audit_summary.json", media_type: "application/json", source_kind: "figure_audit" },
   { path: "review/topic_probe_gate.json", media_type: "application/json", source_kind: "governance" },
-  {
-    path: "analysis/venue_viability_report.json",
-    media_type: "application/json",
-    source_kind: "governance",
-    pre_projection_optional: true
-  },
   { path: "review/topic_probe_followup_handoff.json", media_type: "application/json", source_kind: "governance" },
   { path: "topic_probe_outcome.json", media_type: "application/json", source_kind: "governance" }
 ] satisfies ReviewInputDefinition[]).sort((left, right) => left.path.localeCompare(right.path));
@@ -197,7 +190,7 @@ export async function buildReviewInputManifest(input: {
     })
   );
   const payload = {
-    schema_version: 2 as const,
+    schema_version: 1 as const,
     artifact_kind: "review_input_manifest" as const,
     run_id: input.runId,
     research_cycle: input.researchCycle ?? 0,
@@ -492,11 +485,7 @@ function validateManifest(
   expected: { runId?: string; researchCycle?: number; checkpointSeq?: number },
   reasons: string[]
 ): ReviewInputManifest | undefined {
-  if (
-    !isRecord(value)
-    || (value.schema_version !== 1 && value.schema_version !== 2)
-    || value.artifact_kind !== "review_input_manifest"
-  ) {
+  if (!isRecord(value) || value.schema_version !== 1 || value.artifact_kind !== "review_input_manifest") {
     return undefined;
   }
   if (!hasExactKeys(value, [
@@ -546,7 +535,7 @@ function validateManifest(
     return undefined;
   }
   return {
-    schema_version: value.schema_version,
+    schema_version: 1,
     artifact_kind: "review_input_manifest",
     run_id: value.run_id,
     research_cycle: value.research_cycle as number,
@@ -574,16 +563,6 @@ async function validateManifestInputs(
   for (const definition of REVIEW_INPUT_DEFINITIONS) {
     const entry = entries.get(definition.path);
     if (!entry) {
-      if (
-        manifest.schema_version === 1
-        && definition.pre_projection_optional
-      ) {
-        const current = await readRegularFile(path.join(runDir, definition.path));
-        if (current.kind !== "missing") {
-          reasons.push(`review_input_newly_present:${definition.path}`);
-        }
-        continue;
-      }
       reasons.push(`review_input_manifest_path_missing:${definition.path}`);
       continue;
     }

@@ -10,15 +10,12 @@ export interface ResolvedRunCommand {
   cwd: string;
   source: string;
   metricsPath: string;
-  commandArtifactPath?: string;
   testCommand?: string;
   testCwd?: string;
   requestedGpuCount?: number;
   requestedGpuCountSource?: string;
   environmentGpuLimit?: number;
   environmentGpuLimitSource?: string;
-  visibleGpuDeviceIds?: string[];
-  visibleGpuDeviceIdsSource?: string;
   gpuRequestIssue?: string;
 }
 
@@ -28,8 +25,6 @@ export type RunCommandGpuRequestMetadata = Pick<
   | "requestedGpuCountSource"
   | "environmentGpuLimit"
   | "environmentGpuLimitSource"
-  | "visibleGpuDeviceIds"
-  | "visibleGpuDeviceIdsSource"
   | "gpuRequestIssue"
 >;
 
@@ -81,17 +76,13 @@ export async function resolveRunCommand(
         })
       : undefined;
     if (fullStudyAlternative) {
-      return withGpuMetadata({
-        ...fullStudyAlternative,
-        commandArtifactPath: fullStudyAlternative.commandArtifactPath || explicitCommandArtifact
-      });
+      return withGpuMetadata(fullStudyAlternative);
     }
     return withGpuMetadata({
       command: explicitCommand,
       cwd: explicitCwd,
       source: "run_context.run_command",
       metricsPath,
-      commandArtifactPath: explicitCommandArtifact,
       testCommand: testCommand || undefined,
       testCwd: explicitCwd
     });
@@ -109,7 +100,6 @@ export async function resolveRunCommand(
       cwd: explicitCwd,
       source: "run_context.script",
       metricsPath,
-      commandArtifactPath: scriptPath,
       testCommand: testCommand || undefined,
       testCwd: explicitCwd
     });
@@ -137,7 +127,6 @@ export async function resolveRunCommand(
           cwd,
           source: `${sourcePrefix}.${relative}`,
           metricsPath,
-          commandArtifactPath: candidate,
           testCommand: testCommand || undefined,
           testCwd: cwd
         });
@@ -161,7 +150,6 @@ export async function resolveRunCommand(
           cwd: dir,
           source: `${sourcePrefix}.package_json#experiment`,
           metricsPath,
-          commandArtifactPath: packageJsonPath,
           testCommand: packageJson.scripts.test ? "npm test -- --runInBand" : testCommand || undefined,
           testCwd: dir
         });
@@ -207,8 +195,6 @@ function resolveGpuRequestMetadata(
   | "requestedGpuCountSource"
   | "environmentGpuLimit"
   | "environmentGpuLimitSource"
-  | "visibleGpuDeviceIds"
-  | "visibleGpuDeviceIdsSource"
   | "gpuRequestIssue"
 > {
   const requestCandidates: Array<{ value: number; source: string }> = [];
@@ -249,7 +235,6 @@ function resolveGpuRequestMetadata(
   }
 
   const environmentLimits: Array<{ value: number; source: string }> = [];
-  const visibleDeviceCandidates: Array<{ value: string[]; source: string }> = [];
   for (const variable of ["CUDA_VISIBLE_DEVICES", "NVIDIA_VISIBLE_DEVICES"] as const) {
     const rawValue = readCommandEnvironmentAssignment(command, variable);
     const visibleCount = rawValue === undefined ? undefined : parseVisibleDeviceCount(rawValue);
@@ -259,29 +244,6 @@ function resolveGpuRequestMetadata(
         source: `run_command.${variable}`
       });
     }
-    const visibleDeviceIds = rawValue === undefined ? undefined : parseVisibleDeviceIds(rawValue);
-    if (visibleDeviceIds !== undefined) {
-      visibleDeviceCandidates.push({
-        value: visibleDeviceIds,
-        source: `run_command.${variable}`
-      });
-    }
-  }
-  const distinctVisibleDeviceLists = new Map<string, string[]>();
-  for (const candidate of visibleDeviceCandidates) {
-    const key = candidate.value.join(",");
-    distinctVisibleDeviceLists.set(key, [
-      ...(distinctVisibleDeviceLists.get(key) || []),
-      candidate.source
-    ]);
-  }
-  if (distinctVisibleDeviceLists.size > 1) {
-    issues.push(
-      "conflicting visible GPU device declarations: "
-      + visibleDeviceCandidates
-        .map((candidate) => `${candidate.source}=${candidate.value.join(",") || "none"}`)
-        .join(", ")
-    );
   }
   if (isRecord(environmentSnapshot) && environmentSnapshot.gpu_available === false) {
     environmentLimits.push({
@@ -293,9 +255,6 @@ function resolveGpuRequestMetadata(
     ? Math.min(...environmentLimits.map((candidate) => candidate.value))
     : undefined;
   const request = distinctRequests.size === 1 ? requestCandidates[0] : undefined;
-  const visibleDevices = distinctVisibleDeviceLists.size === 1
-    ? visibleDeviceCandidates[0]
-    : undefined;
 
   return {
     ...(request
@@ -311,14 +270,6 @@ function resolveGpuRequestMetadata(
             .filter((candidate) => candidate.value === environmentGpuLimit)
             .map((candidate) => candidate.source)
             .join(",")
-        }
-      : {}),
-    ...(visibleDevices
-      ? {
-          visibleGpuDeviceIds: [...visibleDevices.value],
-          visibleGpuDeviceIdsSource: distinctVisibleDeviceLists
-            .get(visibleDevices.value.join(","))
-            ?.join(",")
         }
       : {}),
     ...(issues.length > 0
@@ -408,18 +359,6 @@ function parseVisibleDeviceCount(raw: string): number | undefined {
   }
   const devices = value.split(",").map((item) => item.trim()).filter(Boolean);
   return devices.length > 0 ? devices.length : undefined;
-}
-
-function parseVisibleDeviceIds(raw: string): string[] | undefined {
-  const value = stripShellQuotes(raw).trim();
-  if (!value || /^(?:-1|none|void)$/iu.test(value)) {
-    return [];
-  }
-  if (/^(?:all|\$\{?[A-Za-z_][A-Za-z0-9_]*\}?)$/u.test(value)) {
-    return undefined;
-  }
-  const devices = value.split(",").map((item) => item.trim()).filter(Boolean);
-  return devices.length > 0 ? [...new Set(devices)] : undefined;
 }
 
 function parseNonNegativeInteger(raw: string): number | undefined {

@@ -2,7 +2,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 
 import { ensureScaffold, resolveAppPaths } from "../src/config.js";
 import { AgentOrchestrator } from "../src/core/agents/agentOrchestrator.js";
@@ -179,50 +179,6 @@ function completedExecutionState(lease: TopicProbeFollowupExecutionLease) {
     ownerId: lease.ownerId,
     terminalAt: "2026-01-01T00:00:00.000Z"
   };
-}
-
-function mockRunningPromotionStates(
-  store: RunStore,
-  fenceTokensByChild: Map<string, number>
-): void {
-  const promotionStore = store.getPromotionStore();
-  vi.spyOn(
-    promotionStore,
-    "getExecutionState"
-  ).mockImplementation((childRunId) => {
-    const fenceToken = fenceTokensByChild.get(childRunId);
-    if (fenceToken === undefined) return undefined;
-    const now = new Date().toISOString();
-    return {
-      childRunId,
-      status: "running",
-      fenceToken,
-      ownerId: "controller-owner",
-      claimedAt: now,
-      heartbeatAt: now,
-      leaseExpiresAtMs: Date.now() + 60_000
-    };
-  });
-  vi.spyOn(promotionStore, "heartbeat").mockImplementation((input) => {
-    const fenceToken = fenceTokensByChild.get(input.childRunId);
-    if (
-      fenceToken === undefined
-      || fenceToken !== input.fenceToken
-      || input.ownerId !== "controller-owner"
-    ) {
-      throw new Error("run_promotion_execution_fence_stale");
-    }
-    const now = new Date().toISOString();
-    return {
-      childRunId: input.childRunId,
-      status: "running",
-      fenceToken,
-      ownerId: input.ownerId,
-      claimedAt: now,
-      heartbeatAt: now,
-      leaseExpiresAtMs: Date.now() + input.leaseDurationMs
-    };
-  });
 }
 
 
@@ -487,7 +443,6 @@ describe("AutonomousRunController — autonomous mode", () => {
       title: "Portfolio refresh successor",
       receiptHash
     });
-    mockRunningPromotionStates(store, new Map([[childRun.id, 1]]));
     pauseAtReview(parent, "delegate_successor");
     await store.updateRun(parent);
 
@@ -782,10 +737,6 @@ describe("AutonomousRunController — autonomous mode", () => {
       relation: secondRelation,
       receiptHash: "e".repeat(64)
     });
-    mockRunningPromotionStates(store, new Map([
-      [firstChild.id, 3],
-      [secondChild.id, 4]
-    ]));
     pauseAtReview(rootRun, "delegate_successor");
     pauseAtReview(firstChild, "delegate_successor");
     secondChild.currentNode = "write_paper";

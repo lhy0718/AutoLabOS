@@ -16,8 +16,6 @@ import {
 
 const MANIFEST_NAME = "public-source-snapshot.json";
 const TEXT_SCAN_LIMIT_BYTES = 16 * 1024 * 1024;
-const PRIVATE_RESEARCH_PREFIXES = ["studies/", "docs/research/", "papers/"];
-const PRIVATE_RESEARCH_FILES = new Set(["ISSUES.md", "TODO.md"]);
 const PLACEHOLDER_HOME_SEGMENTS = new Set(["demo", "example", "sample", "test", "user"]);
 const PLACEHOLDER_SECRET_PREFIXES = ["${", "<", "changeme", "placeholder", "replace", "your"];
 const PLACEHOLDER_SECRET_MARKERS = new Set([
@@ -84,7 +82,6 @@ export async function exportPublicSourceSnapshot({ cwd = process.cwd(), outDir, 
         findings: 0,
         rules: [
           "git_metadata_excluded",
-          "private_research_artifact_excluded",
           "personal_home_path_excluded",
           "credential_material_excluded",
           "unsafe_symlink_excluded"
@@ -213,13 +210,6 @@ async function walk(root, relativeDir, entries) {
 async function scanEntries(entries, { repoRoot, homeDir }) {
   const findings = [];
   for (const entry of entries) {
-    if (
-      PRIVATE_RESEARCH_FILES.has(entry.path)
-      || PRIVATE_RESEARCH_PREFIXES.some((prefix) => entry.path.startsWith(prefix))
-    ) {
-      findings.push({ path: entry.path, rule: "private_research_artifact" });
-      continue;
-    }
     if (entry.kind === "unsafe_symlink") {
       findings.push({ path: entry.path, rule: "unsafe_symlink" });
       continue;

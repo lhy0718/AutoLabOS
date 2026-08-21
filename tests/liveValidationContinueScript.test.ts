@@ -189,7 +189,7 @@ describe("live-validation continue helper", () => {
     }
   });
 
-  it("writes role-specific GPT-5.6 defaults even when provider readiness is unavailable", async () => {
+  it("writes role-specific GPT-5.6 defaults into a validation workspace", async () => {
     const tempRoot = await mkdtemp(path.join(os.tmpdir(), "autolabos-preflight-models-"));
     const workspace = path.join(tempRoot, "workspace");
     const outDir = path.join(tempRoot, "out");
@@ -207,28 +207,22 @@ describe("live-validation continue helper", () => {
         ),
         "utf8"
       );
-      try {
-        await execFileAsync("node", [script], {
-          env: {
-            ...process.env,
-            HOME: path.join(tempRoot, "provider-home"),
-            CODEX_HOME: path.join(tempRoot, "provider-home", ".codex"),
-            AUTOLABOS_VALIDATION_WORKSPACE: workspace,
-            AUTOLABOS_VALIDATION_PREFLIGHT_OUT: outDir,
-            AUTOLABOS_VALIDATION_BRIEF: briefRelativePath,
-            AUTOLABOS_VALIDATION_BRIEF_SOURCE: "",
-            AUTOLABOS_VALIDATION_PREFLIGHT_PROFILE: "generic",
-            AUTOLABOS_VALIDATION_CODEX_MODEL: "",
-            AUTOLABOS_VALIDATION_CODEX_CHAT_MODEL: "",
-            AUTOLABOS_VALIDATION_CODEX_EXPERIMENT_MODEL: "",
-            AUTOLABOS_VALIDATION_OPENAI_MODEL: "",
-            AUTOLABOS_VALIDATION_OPENAI_CHAT_MODEL: "",
-            AUTOLABOS_VALIDATION_OPENAI_EXPERIMENT_MODEL: ""
-          }
-        });
-      } catch {
-        // Provider readiness is independent from writing deterministic model defaults.
-      }
+      await execFileAsync("node", [script], {
+        env: {
+          ...process.env,
+          AUTOLABOS_VALIDATION_WORKSPACE: workspace,
+          AUTOLABOS_VALIDATION_PREFLIGHT_OUT: outDir,
+          AUTOLABOS_VALIDATION_BRIEF: briefRelativePath,
+          AUTOLABOS_VALIDATION_BRIEF_SOURCE: "",
+          AUTOLABOS_VALIDATION_PREFLIGHT_PROFILE: "generic",
+          AUTOLABOS_VALIDATION_CODEX_MODEL: "",
+          AUTOLABOS_VALIDATION_CODEX_CHAT_MODEL: "",
+          AUTOLABOS_VALIDATION_CODEX_EXPERIMENT_MODEL: "",
+          AUTOLABOS_VALIDATION_OPENAI_MODEL: "",
+          AUTOLABOS_VALIDATION_OPENAI_CHAT_MODEL: "",
+          AUTOLABOS_VALIDATION_OPENAI_EXPERIMENT_MODEL: ""
+        }
+      });
 
       const config = await readFile(
         path.join(workspace, ".autolabos", "config.yaml"),

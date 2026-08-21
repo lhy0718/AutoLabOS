@@ -16,7 +16,7 @@ export async function detectExecutionProfile(
   if (env.AUTOLABOS_REMOTE_HOST?.trim()) {
     return "remote";
   }
-  if (env.AUTOLABOS_DOCKER_IMAGE?.trim() || env.DOCKER?.trim()) {
+  if (env.DOCKER?.trim()) {
     return "docker";
   }
   if (await fileExists(opts?.dockerEnvFile || "/.dockerenv")) {
@@ -49,7 +49,21 @@ export function executionProfileToDependencyMode(
   }
 }
 
-export function resolveDockerExecTarget(env: NodeJS.ProcessEnv): string {
+export function wrapCommandForExecutionProfile(input: {
+  profile: ExecutionProfile;
+  command: string;
+  cwd: string;
+  env?: NodeJS.ProcessEnv;
+}): string {
+  if (input.profile !== "docker") {
+    return input.command;
+  }
+  const target = resolveDockerExecTarget(input.env || process.env);
+  const inner = `cd ${shellQuote(input.cwd)} && ${input.command}`;
+  return `docker exec ${shellQuote(target)} /bin/sh -lc ${JSON.stringify(inner)}`;
+}
+
+function resolveDockerExecTarget(env: NodeJS.ProcessEnv): string {
   const configured = env.DOCKER?.trim();
   if (configured && configured !== "1" && configured.toLowerCase() !== "true") {
     return configured;
@@ -78,4 +92,8 @@ async function commandIsAvailable(command: string): Promise<boolean> {
     child.once("error", () => resolve(false));
     child.once("exit", (code) => resolve(code === 0));
   });
+}
+
+function shellQuote(value: string): string {
+  return `'${value.replace(/'/g, `'\"'\"'`)}'`;
 }

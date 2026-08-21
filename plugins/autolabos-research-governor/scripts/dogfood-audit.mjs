@@ -139,19 +139,6 @@ const workflowArtifactNames = [
   "TopicProbeDecision",
   "ActiveTopicProbeContract"
 ];
-const projectionArtifactNames = ["VenueViabilityReport"];
-const venueProjectionContract = {
-  authority: "A0_deterministic",
-  decisionScope: "active_candidate",
-  currentEvidenceCeiling: "screening_only",
-  topTierReadinessAllowed: ["blocked", "unresolved"],
-  confirmatoryCandidacyAllowed: ["supported", "unsupported", "unresolved"],
-  confirmatoryCandidacyIndependentFromTopTierReadiness: true,
-  confirmatoryVetoWhenUnsupported: true,
-  topTierReady: false,
-  acceptanceLikelihoodAssessed: false,
-  transitionAuthority: false
-};
 const sidecarArtifactNames = ["ModelReviewBundle"];
 const operationalArtifactNames = ["PluginDependencyReport"];
 const workflowNodes = [
@@ -291,7 +278,7 @@ const checks = [
     && pluginReadmeText.includes("not a CLI-backed command")
     && pluginReadmeText.includes("Do not invoke")
     && workflowNodes.every((node) => pluginReadmeText.includes(node))),
-  check("plugin_readme_documents_all_artifacts", [...artifactNames, ...workflowArtifactNames, ...projectionArtifactNames, ...sidecarArtifactNames, ...operationalArtifactNames].every((artifact) => pluginReadmeText.includes(artifact))),
+  check("plugin_readme_documents_all_artifacts", [...artifactNames, ...workflowArtifactNames, "ActiveTopicProbeContract", ...sidecarArtifactNames, ...operationalArtifactNames].every((artifact) => pluginReadmeText.includes(artifact))),
   check("plugin_readme_documents_discovery_ceiling", pluginReadmeContractText.includes("5-7 candidates")
     && pluginReadmeContractText.includes("at least 3 distinct nonempty evidence-axis clusters")
     && pluginReadmeContractText.includes("strongest-baseline absorption objection")
@@ -326,18 +313,10 @@ const checks = [
     && discoveryIntent?.designHandoff?.downstreamResultsPlanBinding?.favorableSubthresholdOutcome === "not_success"
     && ["metric_unit", "metric_scale", "metric_direction", "effect_criterion"].every((field) =>
       discoveryIntent?.designHandoff?.downstreamResultsPlanBinding?.preserves?.includes(field))),
-  check("printed_contract_bounds_venue_projection", arraysEqual(
-    Object.keys(printedContract.projectionContracts?.VenueViabilityReport || {}).sort(),
-    Object.keys(venueProjectionContract).sort()
-  ) && Object.entries(venueProjectionContract).every(
-    ([key, value]) => JSON.stringify(
-      printedContract.projectionContracts?.VenueViabilityReport?.[key]
-    ) === JSON.stringify(value)
-  )),
   check("governance_doc_documents_all_executable_cli_intents", executableCliIntents.length > 0 && executableCliIntents.every((id) => governanceDocText.includes(id)), {
     executableCliIntents
   }),
-  check("governance_doc_documents_all_artifacts", [...artifactNames, ...workflowArtifactNames, ...projectionArtifactNames, ...sidecarArtifactNames, ...operationalArtifactNames].every((artifact) => governanceDocText.includes(artifact))),
+  check("governance_doc_documents_all_artifacts", [...artifactNames, ...workflowArtifactNames, ...sidecarArtifactNames, ...operationalArtifactNames].every((artifact) => governanceDocText.includes(artifact))),
   check("governance_doc_documents_intent_separation", governanceDocText.includes("### Executable CLI Intents")
     && governanceDocText.includes("### Workflow-Native Intent")
     && governanceDocText.includes("not a CLI-backed command")
@@ -387,7 +366,7 @@ const checks = [
   check("plugin_bridge_excludes_workflow_native_discovery", !pluginBridgeSource.includes('"discover"')
     && !pluginBridgeHelp.includes("discover")
     && pluginBridgeHelp.includes("verify-milestone")),
-  check("print_contract_lists_artifacts", [...artifactNames, ...workflowArtifactNames, ...projectionArtifactNames, ...sidecarArtifactNames, ...operationalArtifactNames].every((artifact) => printContractSource.includes(artifact))),
+  check("print_contract_lists_artifacts", [...artifactNames, ...workflowArtifactNames, ...sidecarArtifactNames, ...operationalArtifactNames].every((artifact) => printContractSource.includes(artifact))),
   check("print_contract_separates_cli_and_workflow_intents", arraysEqual(printedContract.executableCliIntents, executableCliIntents)
     && printedContract.commandIntents === undefined
     && printedContract.compatibility === undefined
@@ -417,10 +396,9 @@ const checks = [
     && discoveryIntent?.designHandoff?.paperClaimEvidence === false),
   check("print_contract_outputs_expected_contract", printedContract.pluginName === manifest.name
     && printedContract.primarySurface === "codex_plugin"
-    && printedContract.schemaVersion === "3.1"
+    && printedContract.schemaVersion === "3.0"
     && arraysEqual(printedContract.artifacts, artifactNames)
     && arraysEqual(printedContract.workflowArtifacts, workflowArtifactNames)
-    && arraysEqual(printedContract.projectionArtifacts, projectionArtifactNames)
     && arraysEqual(printedContract.sidecarArtifacts, sidecarArtifactNames)
     && arraysEqual(printedContract.operationalArtifacts, operationalArtifactNames)
     && arraysEqual(printedContract.executableCliIntents, executableCliIntents)

@@ -691,43 +691,6 @@ label,
   background: linear-gradient(180deg, var(--accent), var(--gold));
 }
 
-.metric-grid article.process-checks-card {
-  grid-column: 1 / -1;
-}
-
-.process-check-list {
-  display: grid;
-  gap: 0;
-  margin: 0;
-  padding: 0;
-  list-style: none;
-}
-
-.process-check-list li {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  align-items: center;
-  gap: 10px;
-  min-width: 0;
-  padding: 8px 0;
-  border-bottom: 1px solid var(--line);
-}
-
-.process-check-list li:last-child {
-  border-bottom: 0;
-}
-
-.process-check-list code {
-  min-width: 0;
-  overflow-wrap: anywhere;
-}
-
-.process-check-status {
-  min-height: 24px;
-  padding: 0 8px;
-  font-size: 0.72rem;
-}
-
 .research-funnel {
   display: grid;
   gap: 12px;
@@ -1596,7 +1559,6 @@ label,
   .node-actions {
     grid-column: 1;
   }
-
 }
 
 /* Operational workbench overrides */

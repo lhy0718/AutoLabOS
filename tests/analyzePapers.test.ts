@@ -5743,7 +5743,7 @@ describe("analyzePapers node", () => {
 
     const manifestRaw = await readFile(path.join(".autolabos", "runs", runId, "analysis_manifest.json"), "utf8");
     expect(manifestRaw).toContain('"topN": 30');
-  }, 10_000);
+  });
 
   it("reuses cached rerank selection when request and corpus are unchanged", async () => {
     const root = await mkdtemp(path.join(tmpdir(), "autolabos-analyze-rerank-cache-"));

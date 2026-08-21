@@ -3,7 +3,6 @@ import { spawn } from "node:child_process";
 import { promises as fs } from "node:fs";
 
 import { resolveAppPaths } from "../config.js";
-import { resolveDockerExecTarget } from "../runtime/executionProfile.js";
 import {
   DoctorCheck,
   DoctorCheckStatus,
@@ -12,12 +11,6 @@ import {
   ExperimentNetworkPurpose,
   WorkflowApprovalMode
 } from "../types.js";
-import type { AciExecutionEnvelopeRequest, AciObservation } from "../tools/aci.js";
-import {
-  buildDockerCreateExecutionPlan,
-  parseDockerContainerInspection,
-  validateDockerExecutionBoundary
-} from "../tools/dockerExecution.js";
 import { CodexNativeClient } from "../integrations/codex/codexCliClient.js";
 import type { CodexOAuthCompatibilityProbeStatus } from "../integrations/codex/oauthResponsesTextClient.js";
 import { checkCodexOAuthStatus } from "../integrations/codex/oauthAuth.js";
@@ -31,10 +24,6 @@ import {
   buildBriefCompletenessArtifact,
   validateResearchBriefMarkdown
 } from "./runs/researchBriefFiles.js";
-import {
-  inspectPromotionSourceLocks,
-  type PromotionSourceLockDiagnostic
-} from "./runs/topicProbePromotionSourceLock.js";
 
 export interface DoctorRunOptions {
   llmMode?: "codex" | "codex_chatgpt_only" | "openai_api" | "ollama";
@@ -68,10 +57,6 @@ export interface DoctorRunOptions {
   allowNetwork?: boolean;
   networkPolicy?: ExperimentNetworkPolicy;
   networkPurpose?: ExperimentNetworkPurpose;
-  dockerExecutable?: string;
-  dockerImage?: string;
-  dockerTarget?: string;
-  processEnvironment?: NodeJS.ProcessEnv;
 }
 
 export interface DoctorReport {
@@ -194,7 +179,6 @@ export async function runDoctorReport(
 
   checks.push(await runDiskFreeSpaceCheck(workspaceRoot));
   checks.push(runNodeVersionCheck(readCurrentNodeVersion()));
-  checks.push(await runPromotionSourceLockCheck(workspaceRoot));
 
   const workspaceWriteProbe = await probeWorkspaceWriteability(workspaceRoot);
   checks.push({
@@ -235,35 +219,13 @@ export async function runDoctorReport(
         ? "Execution approval mode full_auto is only valid for smoke/plan-only work; use manual or risk_ack here."
         : `Execution approval mode: ${executionApprovalMode}`
   });
-  const dockerBoundaryCheck = opts?.codeExecutionExpected && dependencyMode === "docker"
-    ? await runDockerExecutionBoundaryCheck({
-        workspaceRoot,
-        networkPolicy: networkPolicy || "blocked",
-        dockerExecutable: opts.dockerExecutable,
-        dockerImage: opts.dockerImage,
-        dockerTarget: opts.dockerTarget,
-        processEnvironment: opts.processEnvironment
-      })
-    : undefined;
-  if (dockerBoundaryCheck) {
-    checks.push(dockerBoundaryCheck);
-  }
   if (opts?.codeExecutionExpected) {
-    const containerizationSatisfied = dependencyMode === "docker"
-      ? dockerBoundaryCheck?.ok === true
-      : dependencyMode === "remote_gpu"
-        ? false
-        : localIsolationConfigured;
     checks.push({
       name: "experiment-containerization",
-      ok: containerizationSatisfied,
-      detail: dependencyMode === "docker"
-        ? containerizationSatisfied
-          ? "Code execution is expected and the configured Docker target passed boundary inspection."
-          : "Code execution is expected but the configured Docker target did not pass boundary inspection."
-        : dependencyMode === "remote_gpu"
-          ? "Code execution is expected but the remote profile has no enforced execution adapter."
-          : localIsolationConfigured
+      ok: containerizationRequired || localIsolationConfigured,
+      detail: containerizationRequired
+        ? `Code execution is expected and dependency mode ${dependencyMode} requires containerized/high-risk isolation.`
+        : localIsolationConfigured
           ? `Code execution is expected and local repository isolation is configured via ${opts?.candidateIsolation}.`
           : "Code execution is expected but no candidate isolation strategy is configured."
     });
@@ -454,261 +416,6 @@ export async function runDoctor(
 ): Promise<DoctorCheck[]> {
   const report = await runDoctorReport(codex, opts);
   return report.checks;
-}
-
-export async function runDockerExecutionBoundaryCheck(input: {
-  workspaceRoot: string;
-  networkPolicy: ExperimentNetworkPolicy;
-  dockerExecutable?: string;
-  dockerImage?: string;
-  dockerTarget?: string;
-  processEnvironment?: NodeJS.ProcessEnv;
-}): Promise<DoctorCheck> {
-  const hostEnvironment = input.processEnvironment || process.env;
-  const dockerImage = input.dockerImage || hostEnvironment.AUTOLABOS_DOCKER_IMAGE?.trim();
-  if (dockerImage) {
-    return await runEphemeralDockerExecutionBoundaryCheck({
-      workspaceRoot: input.workspaceRoot,
-      networkPolicy: input.networkPolicy,
-      dockerExecutable: input.dockerExecutable || "docker",
-      dockerImage,
-      hostEnvironment
-    });
-  }
-  const target = input.dockerTarget || resolveDockerExecTarget(hostEnvironment);
-  const observation = await runDockerCommand(
-    input.dockerExecutable || "docker",
-    ["container", "inspect", target],
-    hostEnvironment
-  );
-  let inspection;
-  try {
-    inspection = parseDockerContainerInspection(observation);
-  } catch (error) {
-    const reason = error instanceof Error ? error.message : "docker_container_inspect_failed";
-    return {
-      name: "docker-execution-boundary",
-      ok: false,
-      status: "fail",
-      detail: `Docker target inspection failed (${reason}).`
-    };
-  }
-  const workspaceRoot = path.resolve(input.workspaceRoot);
-  const request: AciExecutionEnvelopeRequest = {
-    version: 1,
-    envelopeId: "doctor-boundary-probe",
-    runId: "doctor-boundary-probe",
-    phase: "preflight",
-    attempt: 1,
-    executionProfile: "docker",
-    command: "true",
-    commandSha256: "doctor-boundary-probe",
-    workspaceRoot,
-    cwd: workspaceRoot,
-    writableRoots: [workspaceRoot],
-    environmentAllowlist: [],
-    devicePolicy: {
-      kind: "cpu_only",
-      requestedGpuCount: 0,
-      visibleGpuDeviceIds: []
-    },
-    networkPolicy: input.networkPolicy,
-    timeoutMs: 5_000,
-    inputArtifacts: [],
-    dependencyArtifacts: [],
-    expectedOutputs: []
-  };
-  const validation = validateDockerExecutionBoundary(request, inspection, {
-    enforceDevicePolicy: false
-  });
-  return validation.valid
-    ? {
-        name: "docker-execution-boundary",
-        ok: true,
-        status: "ok",
-        detail: "Docker target passed the common execution boundary; exact device exposure is checked per command."
-      }
-    : {
-        name: "docker-execution-boundary",
-        ok: false,
-        status: "fail",
-        detail: `Docker target boundary failed: ${validation.reasonCodes.join(", ")}.`
-      };
-}
-
-async function runEphemeralDockerExecutionBoundaryCheck(input: {
-  workspaceRoot: string;
-  networkPolicy: ExperimentNetworkPolicy;
-  dockerExecutable: string;
-  dockerImage: string;
-  hostEnvironment: NodeJS.ProcessEnv;
-}): Promise<DoctorCheck> {
-  const workspaceRoot = path.resolve(input.workspaceRoot);
-  const request: AciExecutionEnvelopeRequest = {
-    version: 1,
-    envelopeId: "doctor-boundary-probe",
-    runId: "doctor-boundary-probe",
-    phase: "preflight",
-    attempt: 1,
-    executionProfile: "docker",
-    command: "true",
-    commandSha256: "doctor-boundary-probe",
-    workspaceRoot,
-    cwd: workspaceRoot,
-    writableRoots: [path.join(workspaceRoot, ".autolabos", "runs")],
-    environmentAllowlist: [],
-    devicePolicy: {
-      kind: "cpu_only",
-      requestedGpuCount: 0,
-      visibleGpuDeviceIds: []
-    },
-    networkPolicy: input.networkPolicy,
-    timeoutMs: 5_000,
-    inputArtifacts: [],
-    dependencyArtifacts: [],
-    expectedOutputs: []
-  };
-  let plan;
-  try {
-    plan = buildDockerCreateExecutionPlan(request, input.dockerImage, {}, {
-      dockerExecutable: input.dockerExecutable,
-      hostEnvironment: input.hostEnvironment,
-      containerName: "autolabos-doctor-" + process.pid + "-" + Date.now()
-    });
-  } catch (error) {
-    return dockerDoctorFailure(
-      error instanceof Error ? error.message : "docker_container_plan_invalid"
-    );
-  }
-  const create = await runDockerCommand(plan.executable, plan.args, plan.hostEnvironment);
-  if (create.status !== "ok") {
-    return dockerDoctorFailure("docker_container_create_failed");
-  }
-
-  let failureReason: string | undefined;
-  try {
-    const createdInspection = await inspectDockerContainer(
-      plan.executable,
-      plan.containerName,
-      plan.hostEnvironment
-    );
-    const createdValidation = validateDockerExecutionBoundary(request, createdInspection, {
-      expectedState: "stopped"
-    });
-    if (!createdValidation.valid) {
-      failureReason = createdValidation.reasonCodes.join(", ");
-    } else {
-      const start = await runDockerCommand(
-        plan.executable,
-        ["start", "--attach", plan.containerName],
-        plan.hostEnvironment
-      );
-      if (start.status !== "ok") {
-        failureReason = "docker_container_start_failed";
-      } else {
-        const stoppedInspection = await inspectDockerContainer(
-          plan.executable,
-          plan.containerName,
-          plan.hostEnvironment
-        );
-        const stoppedValidation = validateDockerExecutionBoundary(request, stoppedInspection, {
-          expectedState: "stopped"
-        });
-        if (!stoppedValidation.valid) {
-          failureReason = stoppedValidation.reasonCodes.join(", ");
-        } else if (createdValidation.fingerprint !== stoppedValidation.fingerprint) {
-          failureReason = "docker_boundary_changed_during_probe";
-        }
-      }
-    }
-  } catch (error) {
-    failureReason = error instanceof Error ? error.message : "docker_container_inspect_failed";
-  }
-
-  const cleanup = await runDockerCommand(
-    plan.executable,
-    ["container", "rm", "--force", plan.containerName],
-    plan.hostEnvironment
-  );
-  if (cleanup.status !== "ok") {
-    failureReason = failureReason
-      ? failureReason + ", docker_container_cleanup_failed"
-      : "docker_container_cleanup_failed";
-  }
-  return failureReason
-    ? dockerDoctorFailure(failureReason)
-    : {
-        name: "docker-execution-boundary",
-        ok: true,
-        status: "ok",
-        detail: "Docker image passed ephemeral create, boundary, execution, stopped-state, and cleanup checks."
-      };
-}
-
-async function inspectDockerContainer(
-  executable: string,
-  target: string,
-  environment: NodeJS.ProcessEnv
-) {
-  const observation = await runDockerCommand(
-    executable,
-    ["container", "inspect", target],
-    environment
-  );
-  return parseDockerContainerInspection(observation);
-}
-
-function dockerDoctorFailure(reason: string): DoctorCheck {
-  return {
-    name: "docker-execution-boundary",
-    ok: false,
-    status: "fail",
-    detail: "Docker image boundary probe failed (" + reason + ")."
-  };
-}
-
-async function runDockerCommand(
-  executable: string,
-  args: string[],
-  environment: NodeJS.ProcessEnv,
-  timeoutMs = 5_000
-): Promise<AciObservation> {
-  const started = Date.now();
-  return await new Promise<AciObservation>((resolve) => {
-    const child = spawn(executable, args, {
-      env: environment,
-      stdio: ["ignore", "pipe", "pipe"]
-    });
-    let stdout = "";
-    let stderr = "";
-    let settled = false;
-    let timeout: NodeJS.Timeout | undefined;
-    const settle = (code: number | null, reason?: string) => {
-      if (settled) return;
-      settled = true;
-      if (timeout) clearTimeout(timeout);
-      resolve({
-        status: code === 0 ? "ok" : "error",
-        stdout,
-        stderr: [stderr, reason].filter(Boolean).join("\n"),
-        exit_code: code ?? 1,
-        duration_ms: Date.now() - started
-      });
-    };
-    timeout = setTimeout(() => {
-      child.kill("SIGKILL");
-      settle(1, "docker_command_timeout");
-    }, timeoutMs);
-    timeout.unref?.();
-    child.stdout.on("data", (chunk) => {
-      stdout += chunk.toString("utf8");
-    });
-    child.stderr.on("data", (chunk) => {
-      stderr += chunk.toString("utf8");
-    });
-    child.on("error", () => settle(1, "docker_command_failed"));
-    child.on("close", (code) => settle(code));
-  });
 }
 
 function normalizeExecutionApprovalMode(
@@ -986,69 +693,7 @@ export function buildDoctorHighlightLines(report: DoctorReport): string[] {
       `${pageBudgetCheck.ok ? "[OK]" : "[ATTN]"} paper page budget: ${pageBudgetCheck.detail}`
     );
   }
-  const promotionSourceLockCheck = report.checks.find(
-    (check) => check.name === "promotion-source-locks"
-  );
-  if (promotionSourceLockCheck && getDoctorCheckStatus(promotionSourceLockCheck) !== "ok") {
-    lines.push(
-      `${getDoctorCheckStatus(promotionSourceLockCheck) === "fail" ? "[ATTN]" : "[WARN]"} `
-      + `promotion source locks: ${promotionSourceLockCheck.detail}`
-    );
-  }
   return lines;
-}
-
-async function runPromotionSourceLockCheck(workspaceRoot: string): Promise<DoctorCheck> {
-  const diagnostics = await inspectPromotionSourceLocks(workspaceRoot);
-  if (diagnostics.length === 0) {
-    return {
-      name: "promotion-source-locks",
-      ok: true,
-      detail: "No promotion source locks are present."
-    };
-  }
-
-  const blocking = diagnostics.filter((diagnostic) => diagnostic.status !== "active");
-  const summary = diagnostics.map(formatPromotionSourceLockDiagnostic).join("; ");
-  if (blocking.length > 0) {
-    return {
-      name: "promotion-source-locks",
-      ok: false,
-      detail:
-        `Unsafe promotion source lock state detected: ${summary}. `
-        + "Automatic deletion is disabled; confirm the holder state and resolve the lock manually before promotion."
-    };
-  }
-  return {
-    name: "promotion-source-locks",
-    ok: true,
-    status: "warn",
-    detail:
-      `Promotion source writes are currently serialized by an active lock: ${summary}. `
-      + "Wait for the holder to finish before retrying promotion."
-  };
-}
-
-function formatPromotionSourceLockDiagnostic(
-  diagnostic: PromotionSourceLockDiagnostic
-): string {
-  const fields = [
-    `run=${diagnostic.runId}`,
-    `status=${diagnostic.status}`
-  ];
-  if (diagnostic.pid) fields.push(`pid=${diagnostic.pid}`);
-  if (diagnostic.heartbeatAgeMs !== undefined) {
-    fields.push(`heartbeat_age=${formatDuration(diagnostic.heartbeatAgeMs)}`);
-  }
-  if (diagnostic.acquiredAt) fields.push(`acquired_at=${diagnostic.acquiredAt}`);
-  fields.push(diagnostic.detail);
-  return fields.join(", ");
-}
-
-function formatDuration(durationMs: number): string {
-  if (durationMs < 1000) return `${Math.floor(durationMs)}ms`;
-  if (durationMs < 60_000) return `${Math.floor(durationMs / 1000)}s`;
-  return `${Math.floor(durationMs / 60_000)}m`;
 }
 
 export function parseDoctorCommandArgs(args: string[]): ParsedDoctorCommandArgs {

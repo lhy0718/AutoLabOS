@@ -28,19 +28,6 @@ export class AgentOrchestrator {
     this.runtime.setApprovalMode(mode);
   }
 
-  authorizeDelegatedExecution(lease: {
-    childRunId: string;
-    ownerId: string;
-    fenceToken: number;
-    leaseDurationMs: number;
-  }): void {
-    this.runtime.authorizeDelegatedExecution(lease);
-  }
-
-  revokeDelegatedExecution(runId: string): void {
-    this.runtime.revokeDelegatedExecution(runId);
-  }
-
   async runAgent(runId: string, nodeId: GraphNodeId): Promise<AgentRunResponse> {
     return this.runAgentWithOptions(runId, nodeId);
   }

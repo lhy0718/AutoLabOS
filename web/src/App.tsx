@@ -1318,12 +1318,9 @@ function ResearchWorkbench(props: ResearchWorkbenchProps) {
   const workflowCloseRef = useRef<HTMLButtonElement | null>(null);
   const workflowNavRef = useRef<HTMLElement | null>(null);
   const utilityInvokerRef = useRef<HTMLElement | null>(null);
-  const detailsInvokerRef = useRef<HTMLElement | null>(null);
   const detailsBackdropPointerDownRef = useRef(false);
   const [detailsMenuOpen, setDetailsMenuOpen] = useState(false);
   const [utilitySurface, setUtilitySurface] = useState<UtilitySurface>(null);
-  const utilitySurfaceRef = useRef<UtilitySurface>(utilitySurface);
-  utilitySurfaceRef.current = utilitySurface;
   const [compactViewport, setCompactViewport] = useState(false);
   const [activityModalViewport, setActivityModalViewport] = useState(false);
   const inspectorOpen = utilitySurface === "details";
@@ -1377,12 +1374,7 @@ function ResearchWorkbench(props: ResearchWorkbenchProps) {
     const openCommandPanel = (event: globalThis.KeyboardEvent) => {
       if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "k") {
         event.preventDefault();
-        const runPickerInvoker = shellRef.current?.querySelector<HTMLElement>(
-          ".run-picker-popover"
-        )
-          ? shellRef.current?.querySelector<HTMLElement>(".run-picker-trigger") || null
-          : null;
-        openInspector("logs", runPickerInvoker);
+        openInspector("logs");
       }
     };
     document.addEventListener("keydown", openCommandPanel);
@@ -1441,9 +1433,6 @@ function ResearchWorkbench(props: ResearchWorkbenchProps) {
     window.requestAnimationFrame(() => focusTarget?.focus());
 
     const handleKeyDown = (event: globalThis.KeyboardEvent) => {
-      if (utilitySurfaceRef.current !== utilitySurface) {
-        return;
-      }
       if (event.key === "Escape") {
         if (isModal || surface?.contains(document.activeElement)) {
           event.preventDefault();
@@ -1483,21 +1472,16 @@ function ResearchWorkbench(props: ResearchWorkbenchProps) {
   }, [utilitySurface, compactViewport, activityModalViewport]);
 
   function rememberUtilityInvoker(fallback?: HTMLElement | null): void {
-    utilityInvokerRef.current = resolveUtilityInvoker(fallback);
-  }
-
-  function resolveUtilityInvoker(fallback?: HTMLElement | null): HTMLElement | null {
     const current = document.activeElement;
     if (current instanceof HTMLElement && current.closest(".run-picker-popover")) {
-      return shellRef.current?.querySelector<HTMLElement>(".run-picker-trigger") || fallback || null;
+      utilityInvokerRef.current = shellRef.current?.querySelector<HTMLElement>(".run-picker-trigger") || fallback || null;
+      return;
     }
-    return current instanceof HTMLElement ? current : fallback || null;
+    utilityInvokerRef.current = current instanceof HTMLElement ? current : fallback || null;
   }
 
   function closeUtilitySurface(): void {
-    const invoker = utilitySurface === "details"
-      ? detailsInvokerRef.current
-      : utilityInvokerRef.current;
+    const invoker = utilityInvokerRef.current;
     setUtilitySurface(null);
     window.requestAnimationFrame(() => {
       if (invoker?.isConnected) {
@@ -1508,7 +1492,7 @@ function ResearchWorkbench(props: ResearchWorkbenchProps) {
     });
   }
 
-  function openInspector(tab: TabId, preferredInvoker?: HTMLElement | null): void {
+  function openInspector(tab: TabId): void {
     if (utilitySurface === "details") {
       props.onSetActiveTab(tab);
       setDetailsMenuOpen(false);
@@ -1516,20 +1500,14 @@ function ResearchWorkbench(props: ResearchWorkbenchProps) {
     }
     if (utilitySurface === "activity") {
       const activeElement = document.activeElement;
-      if (preferredInvoker) {
-        detailsInvokerRef.current = preferredInvoker;
-      } else if (!(activeElement instanceof Node) || !activityDrawerRef.current?.contains(activeElement)) {
-        detailsInvokerRef.current = resolveUtilityInvoker();
-      } else {
-        detailsInvokerRef.current = utilityInvokerRef.current;
+      if (!(activeElement instanceof Node) || !activityDrawerRef.current?.contains(activeElement)) {
+        rememberUtilityInvoker();
       }
     } else {
-      if (preferredInvoker) {
-        detailsInvokerRef.current = preferredInvoker;
-      } else if (detailsMenuOpen && detailsButtonRef.current) {
-        detailsInvokerRef.current = detailsButtonRef.current;
+      if (detailsMenuOpen && detailsButtonRef.current) {
+        utilityInvokerRef.current = detailsButtonRef.current;
       } else {
-        detailsInvokerRef.current = resolveUtilityInvoker();
+        rememberUtilityInvoker();
       }
     }
     props.onSetActiveTab(tab);
@@ -3073,62 +3051,6 @@ function EvidenceBoard(props: ResearchWorkbenchProps) {
             </div>
           </article>
         ) : null}
-        {props.selectedJob?.research_process ? (
-          <article>
-            <span>Research process</span>
-            <strong>
-              {props.selectedJob.research_process.status.replaceAll("_", " ")}
-              {" · "}
-              {props.selectedJob.research_process.passed_required_check_count}/{props.selectedJob.research_process.required_check_count}
-            </strong>
-            <p>
-              Blockers {props.selectedJob.research_process.blocker_count}
-              {" · "}
-              Paper gate {props.selectedJob.research_process.paper_ready_eligible ? "eligible" : "blocked"}
-            </p>
-          </article>
-        ) : null}
-        {props.selectedJob?.research_process?.checks.some((check) => check.required && check.status !== "pass") ? (
-          <article className="process-checks-card">
-            <span>Process checks requiring action</span>
-            <ul className="process-check-list" aria-label="Research process checks requiring action">
-              {props.selectedJob.research_process.checks
-                .filter((check) => check.required && check.status !== "pass")
-                .map((check) => (
-                  <li key={check.id}>
-                    <code>{check.id}</code>
-                    <span className={`status-pill process-check-status ${check.status === "fail" || check.status === "invalid" ? "is-danger" : "is-warning"}`}>
-                      {formatStatusLabel(check.status)}
-                    </span>
-                  </li>
-                ))}
-            </ul>
-          </article>
-        ) : null}
-        {props.selectedJob?.research_process?.checks.some((check) => check.required && check.status !== "pass" && check.artifact_refs.length > 0) ? (
-          <article>
-            <span>Process evidence</span>
-            <div className="decision-actions">
-              {props.selectedJob.research_process.checks
-                .filter((check) => check.required && check.status !== "pass")
-                .flatMap((check) => check.artifact_refs)
-                .filter((artifact, index, artifacts) => artifacts.findIndex((candidate) => candidate.path === artifact.path) === index)
-                .slice(0, 4)
-                .map((artifact) => (
-                  <button
-                    key={artifact.path}
-                    className="button button-secondary button-small"
-                    type="button"
-                    disabled={props.isBusy}
-                    onClick={() => props.onOpenInsightReference(artifact.path)}
-                    aria-label={`Open ${artifact.label}`}
-                  >
-                    {artifact.label}
-                  </button>
-                ))}
-            </div>
-          </article>
-        ) : null}
         {props.selectedJob?.paper_readiness_state ? (
           <article><span>Paper state</span><strong>{props.selectedJob.paper_gate_label || props.selectedJob.paper_readiness_state}</strong></article>
         ) : null}
@@ -3252,44 +3174,6 @@ function ResearchFunnelSummary({
             ? formatStatusLabel(funnel.outcome_next_action)
             : "Unmeasured"}</dd>
         </div>
-        {funnel.venue_viability && (
-          funnel.outcome_disposition
-          || funnel.venue_viability.status !== "unmeasured"
-        ) ? (
-          <>
-            <div>
-              <dt>Venue assessment</dt>
-              <dd>{formatStatusLabel(funnel.venue_viability.status)} ({
-                funnel.venue_viability.trusted ? "trusted" : "untrusted"
-              })</dd>
-            </div>
-            {funnel.venue_viability.candidate_viability ? (
-            <div>
-              <dt>Candidate viability</dt>
-              <dd>{formatStatusLabel(funnel.venue_viability.candidate_viability)}</dd>
-            </div>
-            ) : null}
-            {funnel.venue_viability.confirmatory_candidacy ? (
-              <div>
-                <dt>Confirmatory candidacy</dt>
-                <dd>{formatStatusLabel(funnel.venue_viability.confirmatory_candidacy)}</dd>
-              </div>
-            ) : null}
-            {funnel.venue_viability.current_evidence_ceiling ? (
-            <div>
-              <dt>Current evidence ceiling</dt>
-              <dd>{formatStatusLabel(funnel.venue_viability.current_evidence_ceiling)}</dd>
-            </div>
-            ) : null}
-            <div>
-              <dt>Top-tier readiness</dt>
-              <dd>{funnel.venue_viability?.top_tier_readiness
-                ? formatStatusLabel(funnel.venue_viability.top_tier_readiness)
-                  + " (not ready; acceptance not assessed)"
-                : "Unmeasured (not assessed)"}</dd>
-            </div>
-          </>
-        ) : null}
         <div>
           <dt>Candidates</dt>
           <dd>{funnel.candidate_count}{funnel.diagnostics_trusted ? "" : " (diagnostic)"}</dd>

@@ -203,19 +203,6 @@ describe("runProjection", () => {
         lifecycle_stage: "outcome_decided",
         outcome_disposition: "promote_to_confirmatory",
         outcome_next_action: "start_confirmatory_run",
-        venue_viability: {
-          status: "trusted",
-          trusted: true,
-          candidate_viability: "continue",
-          current_evidence_ceiling: "screening_only",
-          top_tier_readiness: "unresolved",
-          confirmatory_candidacy: "supported",
-          declared_comparator_effect_gate: "passed",
-          top_tier_ready: false,
-          acceptance_likelihood_assessed: false,
-          reason_codes: ["bounded_probe_is_screening_only"],
-          required_upgrades: ["confirmatory_evidence_required"]
-        },
         outcome_gate: {
           status: "decided",
           trusted: true,
@@ -241,9 +228,6 @@ describe("runProjection", () => {
     expect(projection.detail).toContain("outcome=promote_to_confirmatory");
     expect(projection.detail).toContain("next_action=start_confirmatory_run");
     expect(projection.detail).toContain("paper_evidence_allowed=false");
-    expect(projection.detail).toContain(
-      "Venue viability: status=trusted; trusted=true; candidate=continue; confirmatory=supported; evidence_ceiling=screening_only; top_tier=unresolved; acceptance_likelihood_assessed=false."
-    );
     expect(projection.detail).not.toContain("stage=probe_authorized");
   });
 

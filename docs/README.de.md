@@ -332,8 +332,8 @@ Das LLM wird durch `TASK.md` darauf beschränkt, nur `TARGET_FILE + unified diff
 `autolabos evolve` führt eine bounded mutation-and-evaluation loop über `.codex` und `node-prompts` aus.
 
 - unterstützt `--max-cycles`, `--target skills|prompts|all` und `--dry-run`
-- liest Komponentenwerte und artefaktgestuetzte Prozesspruefungen aus dem Eval-Harness und `run_status.research_process`; kein Readiness-Wert ist ein wissenschaftliches Gate
-- schlaegt begrenzte Prompt/Skill-Verbesserungen vor, wiederholt die Validation und vergleicht Prozessblocker zwischen Zyklen
+- liest die Run-Fitness aus `paper_readiness.overall_score`
+- mutiert Prompts und Skills, führt Validation aus und vergleicht die Fitness über Zyklen hinweg
 - bei Regression wird `.codex` und `node-prompts` vom letzten good git tag wiederhergestellt
 
 Das ist ein self-improvement path, aber kein unbeschränkter repo-wide rewrite path.

@@ -30,10 +30,6 @@ export const TOPIC_PROBE_SUCCESSOR_ARTIFACT_PATHS = {
   handoff: `${TOPIC_PROBE_SUCCESSOR_GOVERNANCE_ROOT}/handoff.json`,
   boundedOutcome:
     `${TOPIC_PROBE_SUCCESSOR_GOVERNANCE_ROOT}/bounded_outcome.json`,
-  outcomeGate:
-    `${TOPIC_PROBE_SUCCESSOR_GOVERNANCE_ROOT}/outcome_gate.json`,
-  venueViability:
-    `${TOPIC_PROBE_SUCCESSOR_GOVERNANCE_ROOT}/venue_viability_report.json`,
   reviewGate:
     `${TOPIC_PROBE_SUCCESSOR_GOVERNANCE_ROOT}/review_gate.json`,
   receipt: `${TOPIC_PROBE_SUCCESSOR_GOVERNANCE_ROOT}/receipt.json`
@@ -46,7 +42,7 @@ export interface TopicProbeSuccessorArtifactBinding {
 }
 
 export interface TopicProbeSuccessorLineageManifest {
-  schema_version: 3 | 4 | 5;
+  schema_version: 3;
   artifact_kind: "topic_probe_successor_lineage_manifest";
   relation: RunSuccessorRelation;
   disposition: TopicProbeOutcomeDisposition;
@@ -62,8 +58,6 @@ export interface TopicProbeSuccessorLineageManifest {
   source_portfolio: TopicProbeSuccessorArtifactBinding;
   handoff: TopicProbeSuccessorArtifactBinding;
   bounded_outcome: TopicProbeSuccessorArtifactBinding;
-  outcome_gate?: TopicProbeSuccessorArtifactBinding;
-  venue_viability?: TopicProbeSuccessorArtifactBinding;
   review_gate: TopicProbeSuccessorArtifactBinding;
   content_sha256: string;
 }
@@ -88,8 +82,6 @@ export interface BuildTopicProbeSuccessorLineageManifestInput {
   sourcePortfolio: TopicProbeSuccessorArtifactSource;
   handoff: TopicProbeSuccessorArtifactSource;
   boundedOutcome: TopicProbeSuccessorArtifactSource;
-  outcomeGate: TopicProbeSuccessorArtifactSource;
-  venueViability: TopicProbeSuccessorArtifactSource;
   reviewGate: TopicProbeSuccessorArtifactSource;
 }
 
@@ -116,8 +108,6 @@ const MANIFEST_FIELDS = new Set([
   "source_portfolio",
   "handoff",
   "bounded_outcome",
-  "outcome_gate",
-  "venue_viability",
   "review_gate",
   "content_sha256"
 ]);
@@ -132,7 +122,7 @@ export function buildTopicProbeSuccessorLineageManifest(
   input: BuildTopicProbeSuccessorLineageManifestInput
 ): TopicProbeSuccessorLineageManifest {
   const payload: Omit<TopicProbeSuccessorLineageManifest, "content_sha256"> = {
-    schema_version: 5,
+    schema_version: 3,
     artifact_kind: "topic_probe_successor_lineage_manifest",
     relation: input.relation,
     disposition: input.disposition,
@@ -165,14 +155,6 @@ export function buildTopicProbeSuccessorLineageManifest(
     bounded_outcome: buildBinding(
       TOPIC_PROBE_SUCCESSOR_ARTIFACT_PATHS.boundedOutcome,
       input.boundedOutcome
-    ),
-    outcome_gate: buildBinding(
-      TOPIC_PROBE_SUCCESSOR_ARTIFACT_PATHS.outcomeGate,
-      input.outcomeGate
-    ),
-    venue_viability: buildBinding(
-      TOPIC_PROBE_SUCCESSOR_ARTIFACT_PATHS.venueViability,
-      input.venueViability
     ),
     review_gate: buildBinding(
       TOPIC_PROBE_SUCCESSOR_ARTIFACT_PATHS.reviewGate,
@@ -312,20 +294,6 @@ function artifactBindingEntries(
       manifest.bounded_outcome,
       TOPIC_PROBE_SUCCESSOR_ARTIFACT_PATHS.boundedOutcome
     ],
-    ...(manifest.outcome_gate
-      ? [[
-          "outcome_gate",
-          manifest.outcome_gate,
-          TOPIC_PROBE_SUCCESSOR_ARTIFACT_PATHS.outcomeGate
-        ] as const]
-      : []),
-    ...(manifest.venue_viability
-      ? [[
-          "venue_viability",
-          manifest.venue_viability,
-          TOPIC_PROBE_SUCCESSOR_ARTIFACT_PATHS.venueViability
-        ] as const]
-      : []),
     [
       "review_gate",
       manifest.review_gate,
@@ -339,11 +307,7 @@ function isTopicProbeSuccessorLineageManifest(
 ): value is TopicProbeSuccessorLineageManifest {
   return isRecord(value)
     && hasOnlyKnownFields(value, MANIFEST_FIELDS)
-    && (
-      value.schema_version === 3
-      || value.schema_version === 4
-      || value.schema_version === 5
-    )
+    && value.schema_version === 3
     && value.artifact_kind === "topic_probe_successor_lineage_manifest"
     && isRunSuccessorRelation(value.relation)
     && isDisposition(value.disposition)
@@ -359,12 +323,6 @@ function isTopicProbeSuccessorLineageManifest(
     && isArtifactBinding(value.source_portfolio)
     && isArtifactBinding(value.handoff)
     && isArtifactBinding(value.bounded_outcome)
-    && (value.schema_version === 3
-      ? value.outcome_gate === undefined
-      : isArtifactBinding(value.outcome_gate))
-    && (value.schema_version === 5
-      ? isArtifactBinding(value.venue_viability)
-      : value.venue_viability === undefined)
     && isArtifactBinding(value.review_gate)
     && isSha256(value.content_sha256);
 }

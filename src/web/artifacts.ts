@@ -23,14 +23,6 @@ export async function readRunArtifact(
   data: Buffer;
 }> {
   const absolutePath = resolveRunArtifactPath(paths, runId, relativePath);
-  const root = resolveRunArtifactsRoot(paths, runId);
-  const [realRoot, realTarget] = await Promise.all([
-    fs.realpath(root),
-    fs.realpath(absolutePath)
-  ]);
-  if (!isPathInside(realRoot, realTarget)) {
-    throw new Error("Artifact path escapes the run directory through a symbolic link.");
-  }
   const stat = await fs.stat(absolutePath);
   if (!stat.isFile()) {
     throw new Error("Artifact is not a file.");
@@ -58,9 +50,6 @@ export function resolveRunArtifactPath(paths: AppPaths, runId: string, relativeP
 }
 
 function resolveRunArtifactsRoot(paths: AppPaths, runId: string): string {
-  if (!runId || runId !== path.basename(runId) || runId === "." || runId === "..") {
-    throw new Error("Invalid run id.");
-  }
   return path.join(paths.runsDir, runId);
 }
 
@@ -75,9 +64,6 @@ async function walkArtifacts(root: string, relativeDir: string, out: ArtifactEnt
 
   for (const item of items) {
     if (isAtomicWriteTempFile(item.name)) {
-      continue;
-    }
-    if (item.isSymbolicLink()) {
       continue;
     }
     const relativePath = relativeDir ? path.posix.join(relativeDir, item.name) : item.name;
@@ -104,11 +90,6 @@ async function walkArtifacts(root: string, relativeDir: string, out: ArtifactEnt
     }
     out.push(buildArtifactEntry(relativePath, stat));
   }
-}
-
-function isPathInside(root: string, candidate: string): boolean {
-  const relative = path.relative(root, candidate);
-  return relative === "" || (!relative.startsWith(`..${path.sep}`) && relative !== ".." && !path.isAbsolute(relative));
 }
 
 function isAtomicWriteTempFile(name: string): boolean {

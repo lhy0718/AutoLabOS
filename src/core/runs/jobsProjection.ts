@@ -283,8 +283,7 @@ function stripInternalProjection(input: RunJobProjectionInternal): RunJobProject
     research_funnel: input.research_funnel,
     evidence_readiness: input.evidence_readiness,
     evidence_adequacy: input.evidence_adequacy,
-    review_assurance: input.review_assurance,
-    research_process: input.research_process
+    review_assurance: input.review_assurance
   };
 }
 
@@ -453,15 +452,6 @@ export function formatRunJobProjectionLines(input: {
           .map((artifact) => `${artifact.kind}=${artifact.path}`)
           .join(" | ")}`
       );
-    }
-  }
-  if (input.projection.research_process) {
-    const process = input.projection.research_process;
-    lines.push(
-      `  research process: status=${process.status} trusted=${yesNo(process.trusted)} passed=${process.passed_required_check_count}/${process.required_check_count} blockers=${process.blocker_count} paper_ready_eligible=${yesNo(process.paper_ready_eligible)}`
-    );
-    if (process.reason_codes.length > 0) {
-      lines.push(`  research process reasons: ${process.reason_codes.join(", ")}`);
     }
   }
   if (input.projection.paper_readiness_state) {
@@ -655,7 +645,6 @@ function projectRunStatus(
     evidence_readiness: evidenceReadiness,
     evidence_adequacy: status.evidence_adequacy,
     review_assurance: status.review_assurance,
-    research_process: status.research_process,
     dominantFailure: status.dominant_failure
       ? {
           key: status.dominant_failure.key,
@@ -703,14 +692,6 @@ export function projectResearchFunnel(input: ResearchFunnelProjection): RunResea
     reason_codes: []
   };
   const activeProbe = readVerifiedActiveProbeSource(input);
-  const venueViability = input.venueViability ?? {
-    status: "unmeasured" as const,
-    trusted: false,
-    topTierReady: false as const,
-    acceptanceLikelihoodAssessed: false as const,
-    reasonCodes: [],
-    requiredUpgrades: []
-  };
   return {
     research_mode: input.researchMode,
     lifecycle_stage: input.lifecycleStage,
@@ -962,32 +943,6 @@ export function projectResearchFunnel(input: ResearchFunnelProjection): RunResea
         ? { artifact_ref: { ...input.outcomeGate.artifactRef } }
         : {})
     },
-    venue_viability: {
-      status: venueViability.status,
-      trusted: venueViability.trusted,
-      ...(venueViability.candidateViability
-        ? { candidate_viability: venueViability.candidateViability }
-        : {}),
-      ...(venueViability.currentEvidenceCeiling
-        ? { current_evidence_ceiling: venueViability.currentEvidenceCeiling }
-        : {}),
-      ...(venueViability.topTierReadiness
-        ? { top_tier_readiness: venueViability.topTierReadiness }
-        : {}),
-      ...(venueViability.confirmatoryCandidacy
-        ? { confirmatory_candidacy: venueViability.confirmatoryCandidacy }
-        : {}),
-      ...(venueViability.declaredComparatorEffectGate
-        ? { declared_comparator_effect_gate: venueViability.declaredComparatorEffectGate }
-        : {}),
-      top_tier_ready: false,
-      acceptance_likelihood_assessed: false,
-      reason_codes: [...venueViability.reasonCodes],
-      required_upgrades: [...venueViability.requiredUpgrades],
-      ...(venueViability.artifactRef
-        ? { artifact_ref: { ...venueViability.artifactRef } }
-        : {})
-    },
     followup_handoff: {
       status: input.followupHandoff.status,
       trusted: input.followupHandoff.trusted,
@@ -1063,9 +1018,6 @@ export function projectResearchFunnel(input: ResearchFunnelProjection): RunResea
         : {}),
       ...(input.hashes.topicProbeOutcomeGate
         ? { topic_probe_outcome_gate: input.hashes.topicProbeOutcomeGate }
-        : {}),
-      ...(input.hashes.venueViability
-        ? { venue_viability: input.hashes.venueViability }
         : {}),
       ...(input.hashes.topicProbeFollowupHandoff
         ? { topic_probe_followup_handoff: input.hashes.topicProbeFollowupHandoff }

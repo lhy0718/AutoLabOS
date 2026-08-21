@@ -464,22 +464,6 @@ export class AutonomousRunController {
       stopReason: AutonomousStopReason,
       message?: string
     ): Promise<AutonomousRunResult> => {
-      if (activePromotionLease) {
-        const lease = activePromotionLease;
-        try {
-          if (status === "failed" || status === "canceled") {
-            activePromotionTerminalState =
-              await this.markDelegatedExecutionTerminal(
-                lease,
-                status === "failed" ? "failed" : "canceled",
-                `autonomous controller stopped: ${stopReason}`
-              );
-          }
-        } finally {
-          this.orchestrator.revokeDelegatedExecution(lease.childRunId);
-          activePromotionLease = undefined;
-        }
-      }
       run = await this.getRunOrThrow(activeRunId);
       const paperStatus = await this.readPaperStatus(run);
       const gateResult = this.meetsWritePaperBar(bestBranch, policy.writePaperGate);
@@ -648,9 +632,6 @@ export class AutonomousRunController {
           }
           try {
             activePromotionLease = await this.topicProbeFollowupRuns.heartbeatExecution(
-              activePromotionLease
-            );
-            this.orchestrator.authorizeDelegatedExecution(
               activePromotionLease
             );
             activePromotionTerminalState = undefined;
@@ -1570,18 +1551,6 @@ export class AutonomousRunController {
     lease: TopicProbeFollowupExecutionLease,
     detail: string
   ): Promise<RunPromotionExecutionState> {
-    return this.markDelegatedExecutionTerminal(
-      lease,
-      "completed",
-      detail
-    );
-  }
-
-  private async markDelegatedExecutionTerminal(
-    lease: TopicProbeFollowupExecutionLease,
-    status: RunPromotionTerminalStatus,
-    detail: string
-  ): Promise<RunPromotionExecutionState> {
     const markTerminal = this.topicProbeFollowupRuns.markExecutionTerminal;
     if (!markTerminal) {
       throw new Error("delegated_execution_terminal_persistence_unavailable");
@@ -1589,16 +1558,15 @@ export class AutonomousRunController {
     const terminalState = await markTerminal.call(
       this.topicProbeFollowupRuns,
       lease,
-      status,
+      "completed",
       detail
     );
     if (
       terminalState.childRunId !== lease.childRunId
-      || terminalState.status !== status
+      || terminalState.status !== "completed"
     ) {
       throw new Error("delegated_execution_terminal_state_invalid");
     }
-    this.orchestrator.revokeDelegatedExecution(lease.childRunId);
     return terminalState;
   }
 

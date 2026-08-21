@@ -332,8 +332,8 @@ LLM 透過 `TASK.md` 被限制為只回傳 `TARGET_FILE + unified diff`，而且
 `autolabos evolve` 會圍繞 `.codex` 與 `node-prompts` 執行一個 bounded mutation-and-evaluation loop。
 
 - 支援 `--max-cycles`、`--target skills|prompts|all`、`--dry-run`
-- 從 eval harness 與 `run_status.research_process` 讀取元件分數和以產物為依據的過程檢查，不把 readiness 分數視為科學 gate
-- 提出有界的 prompt/skill 改進，重新執行 validation，並比較不同 cycle 的過程 blocker
+- 從 `paper_readiness.overall_score` 讀取 run fitness
+- 對 prompts 與 skills 做 mutation，執行 validation，並比較不同 cycle 的 fitness
 - 當出現 regression 時，以最後一個 good git tag 還原 `.codex` 與 `node-prompts`
 
 這是一條 self-improvement path，但不是無限制的 repo-wide rewrite path。

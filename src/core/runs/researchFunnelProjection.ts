@@ -38,10 +38,6 @@ import type {
   TopicProbeOutcomeNextAction
 } from "../topicProbeOutcome.js";
 import {
-  validateVenueViabilityReport,
-  VENUE_VIABILITY_REPORT_RELATIVE_PATH
-} from "../venueViability.js";
-import {
   parseResearchRunMode,
   type ResearchRunMode
 } from "./runBriefParser.js";
@@ -107,7 +103,6 @@ export interface ResearchFunnelProjectionHashes {
   activeTopicProbeContract?: string;
   topicProbeOutcome?: string;
   topicProbeOutcomeGate?: string;
-  venueViability?: string;
   topicProbeFollowupHandoff?: string;
   topicProbeReviewGate?: string;
 }
@@ -329,21 +324,6 @@ export interface ResearchFunnelProjection {
   outcomeDisposition?: TopicProbeOutcomeDisposition;
   outcomeNextAction?: TopicProbeOutcomeNextAction;
   outcomeGate: ResearchFunnelOutcomeGateProjection;
-  venueViability: {
-    status: "unmeasured" | "trusted" | "invalid";
-    trusted: boolean;
-    candidateViability?: "continue" | "pivot" | "kill" | "blocked";
-    currentEvidenceCeiling?: "screening_only";
-    topTierReadiness?: "blocked" | "unresolved";
-    confirmatoryCandidacy?: "supported" | "unsupported" | "unresolved";
-    declaredComparatorEffectGate?: "passed" | "failed" | "unresolved" | "invalid";
-    topTierReady: false;
-    acceptanceLikelihoodAssessed: false;
-    reasonCodes: string[];
-    requiredUpgrades: string[];
-    contentHash?: string;
-    artifactRef?: ResearchFunnelProjectionArtifactRef;
-  };
   followupHandoff: ResearchFunnelFollowupHandoffProjection;
   reviewGate: ResearchFunnelReviewGateProjection;
   invalidChainBlockers: string[];
@@ -429,11 +409,6 @@ const ARTIFACTS = {
     label: "Topic probe outcome gate",
     path: "analysis/topic_probe_outcome_gate.json",
     readErrorPrefix: "topic_probe_outcome_gate"
-  },
-  venueViability: {
-    label: "Venue viability",
-    path: VENUE_VIABILITY_REPORT_RELATIVE_PATH,
-    readErrorPrefix: "venue_viability"
   },
   topicProbeFollowupHandoff: {
     label: "Topic probe follow-up handoff",
@@ -592,7 +567,6 @@ export async function loadResearchFunnelProjection(
     resultAnalysisRead,
     outcomeRead,
     outcomeGateRead,
-    venueViabilityRead,
     followupHandoffRead,
     reviewGateRead,
     collectResultRead,
@@ -634,7 +608,6 @@ export async function loadResearchFunnelProjection(
       readArtifact(runDir, ARTIFACTS.resultAnalysis),
       readArtifact(runDir, ARTIFACTS.topicProbeOutcome),
       readArtifact(runDir, ARTIFACTS.topicProbeOutcomeGate),
-      readArtifact(runDir, ARTIFACTS.venueViability),
       readArtifact(runDir, ARTIFACTS.topicProbeFollowupHandoff),
       readArtifact(runDir, ARTIFACTS.topicProbeReviewGate),
       readArtifact(runDir, ARTIFACTS.collectResult),
@@ -799,7 +772,6 @@ export async function loadResearchFunnelProjection(
     resultAnalysisRead,
     outcomeRead,
     outcomeGateRead,
-    venueViabilityRead,
     followupHandoffRead,
     reviewGateRead,
     preChainInvalidBlockers
@@ -1045,7 +1017,6 @@ export async function loadResearchFunnelProjection(
     outcomeDisposition: postProbe.outcome?.disposition,
     outcomeNextAction: postProbe.outcome?.next_action,
     outcomeGate: postProbe.outcomeGate,
-    venueViability: postProbe.venueViability,
     followupHandoff: postProbe.followupHandoff,
     reviewGate: postProbe.reviewGate,
     invalidChainBlockers: postProbe.invalidChainBlockers,
@@ -1080,7 +1051,6 @@ export async function loadResearchFunnelProjection(
       activeTopicProbeContract: activeProbeContract?.content_sha256,
       topicProbeOutcome: postProbe.outcome?.content_sha256,
       topicProbeOutcomeGate: postProbe.outcomeGate.contentHash,
-      venueViability: postProbe.venueViability.contentHash,
       topicProbeFollowupHandoff: postProbe.followupHandoff.contentHash,
       topicProbeReviewGate: postProbe.reviewGate.contentHash
     },
@@ -1098,7 +1068,6 @@ export async function loadResearchFunnelProjection(
       ["resultAnalysis", resultAnalysisRead],
       ["topicProbeOutcome", outcomeRead],
       ["topicProbeOutcomeGate", outcomeGateRead],
-      ["venueViability", venueViabilityRead],
       ["topicProbeFollowupHandoff", followupHandoffRead],
       ["topicProbeReviewGate", reviewGateRead],
       ["collectResult", collectResultRead],
@@ -1122,7 +1091,7 @@ export async function loadResearchFunnelProjection(
   };
 }
 
-export interface TopicProbeOutcomeGateArtifact {
+interface TopicProbeOutcomeGateArtifact {
   schema_version: 1;
   artifact_kind: "topic_probe_outcome_gate";
   run_id: string;
@@ -1131,17 +1100,12 @@ export interface TopicProbeOutcomeGateArtifact {
   disposition: TopicProbeOutcomeDisposition | null;
   outcome_content_sha256: string | null;
   reason_codes: string[];
-  venue_viability_report_contract_version?: 1;
   content_sha256: string;
 }
-
-export const TOPIC_PROBE_OUTCOME_GATE_RELATIVE_PATH =
-  "analysis/topic_probe_outcome_gate.json";
 
 interface PostProbeLifecycleProjection {
   outcome?: TopicProbeOutcomeDecision;
   outcomeGate: ResearchFunnelOutcomeGateProjection;
-  venueViability: ResearchFunnelProjection["venueViability"];
   followupHandoff: ResearchFunnelFollowupHandoffProjection;
   reviewGate: ResearchFunnelReviewGateProjection;
   invalidChainBlockers: string[];
@@ -1154,7 +1118,6 @@ async function projectPostProbeLifecycle(input: {
   resultAnalysisRead: ArtifactRead;
   outcomeRead: ArtifactRead;
   outcomeGateRead: ArtifactRead;
-  venueViabilityRead: ArtifactRead;
   followupHandoffRead: ArtifactRead;
   reviewGateRead: ArtifactRead;
   preChainInvalidBlockers: string[];
@@ -1209,7 +1172,6 @@ async function projectPostProbeLifecycle(input: {
     reasonCodes: [],
     ...(outcomeGateRef ? { artifactRef: outcomeGateRef } : {})
   };
-  let venueViabilityRequired = false;
   if (input.outcomeGateRead.status === "read") {
     const gateValidation = validateTopicProbeOutcomeGateProjection(
       input.outcomeGateRead.raw,
@@ -1220,8 +1182,6 @@ async function projectPostProbeLifecycle(input: {
       }
     );
     const gate = gateValidation.gate;
-    venueViabilityRequired = gateValidation.reasons.length === 0
-      && gate?.venue_viability_report_contract_version === 1;
     outcomeGate = {
       status: gate?.status ?? "invalid",
       trusted: gateValidation.reasons.length === 0,
@@ -1248,98 +1208,6 @@ async function projectPostProbeLifecycle(input: {
     invalidChainBlockers.push(input.outcomeGateRead.reasonCode);
   } else if (input.outcomeRead.status === "read") {
     invalidChainBlockers.push("topic_probe_outcome_gate_missing");
-  }
-
-  const venueRef = artifactRef("venueViability", input.venueViabilityRead);
-  let venueViability: ResearchFunnelProjection["venueViability"] = {
-    status: "unmeasured",
-    trusted: false,
-    topTierReady: false,
-    acceptanceLikelihoodAssessed: false,
-    reasonCodes: [],
-    requiredUpgrades: [],
-    ...(venueRef ? { artifactRef: venueRef } : {})
-  };
-  if (input.venueViabilityRead.status === "read") {
-    const portfolio = sourceValidation?.portfolio;
-    const contract = sourceValidation?.contract;
-    const matchingCandidates = portfolio && contract
-      ? portfolio.candidates.filter(
-          (candidate) =>
-            candidate.source_candidate_id === contract.candidate_id
-            && candidate.topic_id === contract.topic_id
-        )
-      : [];
-    if (outcome && contract && matchingCandidates.length === 1) {
-      const validation = validateVenueViabilityReport(
-        input.venueViabilityRead.raw,
-        {
-          candidate: matchingCandidates[0],
-          contract,
-          outcome
-        }
-      );
-      const report = validation.report;
-      venueViability = validation.valid && report
-        ? {
-            status: "trusted",
-            trusted: true,
-            candidateViability: report.candidate_viability,
-            currentEvidenceCeiling: report.current_evidence_ceiling,
-            topTierReadiness: report.top_tier_readiness,
-            confirmatoryCandidacy: report.confirmatory_candidacy,
-            declaredComparatorEffectGate: report.declared_comparator_effect_gate,
-            topTierReady: false,
-            acceptanceLikelihoodAssessed: false,
-            reasonCodes: [...report.reason_codes],
-            requiredUpgrades: [...report.required_upgrades],
-            contentHash: report.content_sha256,
-            ...(venueRef ? { artifactRef: venueRef } : {})
-          }
-        : {
-            status: "invalid",
-            trusted: false,
-            topTierReady: false,
-            acceptanceLikelihoodAssessed: false,
-            reasonCodes: [...validation.reasons],
-            requiredUpgrades: [],
-            ...(venueRef ? { artifactRef: venueRef } : {})
-          };
-    } else {
-      venueViability = {
-        status: "invalid",
-        trusted: false,
-        topTierReady: false,
-        acceptanceLikelihoodAssessed: false,
-        reasonCodes: [
-          matchingCandidates.length > 1
-            ? "venue_viability_candidate_ambiguous"
-            : "venue_viability_source_context_missing"
-        ],
-        requiredUpgrades: [],
-        ...(venueRef ? { artifactRef: venueRef } : {})
-      };
-    }
-  } else if (input.venueViabilityRead.status === "read_error") {
-    venueViability = {
-      status: "invalid",
-      trusted: false,
-      topTierReady: false,
-      acceptanceLikelihoodAssessed: false,
-      reasonCodes: [input.venueViabilityRead.reasonCode],
-      requiredUpgrades: [],
-      ...(venueRef ? { artifactRef: venueRef } : {})
-    };
-  } else if (venueViabilityRequired) {
-    venueViability = {
-      status: "invalid",
-      trusted: false,
-      topTierReady: false,
-      acceptanceLikelihoodAssessed: false,
-      reasonCodes: ["venue_viability_report_missing"],
-      requiredUpgrades: []
-    };
-    invalidChainBlockers.push("venue_viability_report_missing");
   }
 
   const handoffRef = artifactRef("topicProbeFollowupHandoff", input.followupHandoffRead);
@@ -1467,7 +1335,6 @@ async function projectPostProbeLifecycle(input: {
   return {
     outcome,
     outcomeGate,
-    venueViability,
     followupHandoff,
     reviewGate,
     invalidChainBlockers: uniqueStrings(invalidChainBlockers)
@@ -1508,7 +1375,7 @@ function resolveLifecycleStage(input: {
   return "discovery";
 }
 
-export function validateTopicProbeOutcomeGateProjection(
+function validateTopicProbeOutcomeGateProjection(
   raw: string,
   context: {
     expectedRunId: string;
@@ -1576,7 +1443,6 @@ const TOPIC_PROBE_OUTCOME_GATE_FIELDS = new Set([
   "disposition",
   "outcome_content_sha256",
   "reason_codes",
-  "venue_viability_report_contract_version",
   "content_sha256"
 ]);
 
@@ -1595,8 +1461,6 @@ function isTopicProbeOutcomeGateArtifact(
     && (value.outcome_content_sha256 === null || isSha256(value.outcome_content_sha256))
     && Array.isArray(value.reason_codes)
     && value.reason_codes.every(hasText)
-    && (value.venue_viability_report_contract_version === undefined
-      || value.venue_viability_report_contract_version === 1)
     && isSha256(value.content_sha256);
 }
 

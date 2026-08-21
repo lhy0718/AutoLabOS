@@ -128,7 +128,6 @@ export interface ResearchFunnelDisplayProjection {
   outcomeDisposition?: RunResearchFunnelProjection["outcome_disposition"];
   outcomeNextAction?: RunResearchFunnelProjection["outcome_next_action"];
   outcomeGate: RunResearchFunnelProjection["outcome_gate"];
-  venueViability: RunResearchFunnelProjection["venue_viability"];
   followupHandoff: RunResearchFunnelProjection["followup_handoff"];
   reviewGate: RunResearchFunnelProjection["review_gate"];
   invalidChainBlockers: string[];
@@ -386,14 +385,6 @@ export function projectRunForDisplay(run: RunRecord, hints?: RunProjectionHints)
       + `diagnostics_trusted=${researchFunnel.diagnosticsTrusted}; authorization_trusted=${researchFunnel.authorizationTrusted}.`
       + formatPortfolioCandidatesDetail(researchFunnel.portfolioCandidates)
     );
-    if (
-      researchFunnel.outcomeDisposition
-      || researchFunnel.venueViability.status !== "unmeasured"
-    ) {
-      detailParts.push(
-        `Venue viability: status=${researchFunnel.venueViability.status}; trusted=${researchFunnel.venueViability.trusted}; candidate=${researchFunnel.venueViability.candidate_viability || "unmeasured"}; confirmatory=${researchFunnel.venueViability.confirmatory_candidacy || "unmeasured"}; evidence_ceiling=${researchFunnel.venueViability.current_evidence_ceiling || "unmeasured"}; top_tier=${researchFunnel.venueViability.top_tier_readiness || "unmeasured"}; acceptance_likelihood_assessed=false.`
-      );
-    }
     detailParts.push(
       `Topic probe gates: outcome=${researchFunnel.outcomeGate.status}; handoff=${researchFunnel.followupHandoff.status}; review=${researchFunnel.reviewGate.status}. `
       + formatTopicMemoryDetail(researchFunnel.topicMemory)
@@ -912,14 +903,6 @@ function projectResearchFunnelForDisplay(
       ? "discovery"
       : funnel.lifecycle_stage;
   const activeProbe = readVerifiedActiveTopicProbe(funnel);
-  const venueViability = funnel.venue_viability ?? {
-    status: "unmeasured" as const,
-    trusted: false,
-    top_tier_ready: false as const,
-    acceptance_likelihood_assessed: false as const,
-    reason_codes: [],
-    required_upgrades: []
-  };
   const gapEvidenceAudit = normalizeResearchGapEvidenceAudit(
     funnel.gap_evidence_audit
   );
@@ -992,14 +975,6 @@ function projectResearchFunnelForDisplay(
       reason_codes: [...funnel.outcome_gate.reason_codes],
       ...(funnel.outcome_gate.artifact_ref
         ? { artifact_ref: { ...funnel.outcome_gate.artifact_ref } }
-        : {})
-    },
-    venueViability: {
-      ...venueViability,
-      reason_codes: [...venueViability.reason_codes],
-      required_upgrades: [...venueViability.required_upgrades],
-      ...(venueViability.artifact_ref
-        ? { artifact_ref: { ...venueViability.artifact_ref } }
         : {})
     },
     followupHandoff: {

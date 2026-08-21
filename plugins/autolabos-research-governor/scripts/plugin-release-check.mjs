@@ -28,19 +28,6 @@ const workflowArtifacts = [
   "TopicProbeDecision",
   "ActiveTopicProbeContract"
 ];
-const projectionArtifacts = ["VenueViabilityReport"];
-const venueProjectionContract = {
-  authority: "A0_deterministic",
-  decisionScope: "active_candidate",
-  currentEvidenceCeiling: "screening_only",
-  topTierReadinessAllowed: ["blocked", "unresolved"],
-  confirmatoryCandidacyAllowed: ["supported", "unsupported", "unresolved"],
-  confirmatoryCandidacyIndependentFromTopTierReadiness: true,
-  confirmatoryVetoWhenUnsupported: true,
-  topTierReady: false,
-  acceptanceLikelihoodAssessed: false,
-  transitionAuthority: false
-};
 const workflowNodes = [
   "collect_papers",
   "analyze_papers",
@@ -251,23 +238,14 @@ function main() {
   const contract = contractResult.status === 0 ? parseJsonObject(contractResult.stdout) : undefined;
   checks.push(check("contract_command_passes", contractResult.status === 0, { exitCode: contractResult.status }));
   checks.push(check("contract_names_plugin", contract?.pluginName === manifest.name, { observed: contract?.pluginName }));
-  checks.push(check("contract_schema_version", contract?.schemaVersion === "3.1", { observed: contract?.schemaVersion }));
+  checks.push(check("contract_schema_version", contract?.schemaVersion === "3.0", { observed: contract?.schemaVersion }));
   checks.push(check("contract_lists_artifacts_and_intents", Array.isArray(contract?.artifacts)
     && Array.isArray(contract?.workflowArtifacts)
     && workflowArtifacts.every((artifact) => contract.workflowArtifacts.includes(artifact))
-    && Array.isArray(contract?.projectionArtifacts)
-    && projectionArtifacts.every((artifact) => contract.projectionArtifacts.includes(artifact))
-    && Object.entries(venueProjectionContract).every(
-      ([key, value]) => JSON.stringify(
-        contract?.projectionContracts?.VenueViabilityReport?.[key]
-      ) === JSON.stringify(value)
-    )
     && Array.isArray(contract?.executableCliIntents)
     && Array.isArray(contract?.workflowIntents), {
     artifacts: contract?.artifacts,
     workflowArtifacts: contract?.workflowArtifacts,
-    projectionArtifacts: contract?.projectionArtifacts,
-    projectionContracts: contract?.projectionContracts,
     executableCliIntents: contract?.executableCliIntents,
     workflowIntents: contract?.workflowIntents
   }));

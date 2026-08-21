@@ -332,8 +332,8 @@ LLM через `TASK.md` ограничивается форматом отве�
 `autolabos evolve` запускает bounded mutation-and-evaluation loop поверх `.codex` и `node-prompts`.
 
 - поддерживает `--max-cycles`, `--target skills|prompts|all` и `--dry-run`
-- читает оценки компонентов и проверки процесса по артефактам из eval harness и `run_status.research_process`; readiness score не считается научным gate
-- предлагает ограниченные улучшения prompts/skills, повторно запускает validation и сравнивает блокировки процесса между циклами
+- читает fitness run из `paper_readiness.overall_score`
+- мутирует prompts и skills, запускает validation и сравнивает fitness между циклами
 - при регрессии восстанавливает `.codex` и `node-prompts` из последнего good git tag
 
 Это путь self-improvement, но не неограниченная repo-wide rewrite-механика.

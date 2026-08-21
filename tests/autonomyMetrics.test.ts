@@ -7,7 +7,7 @@ import {
   categorizeFailureFindings
 } from "../src/core/evaluation/autonomyMetrics.js";
 import { createDefaultGraphState } from "../src/core/stateGraph/defaults.js";
-import { RunRecord, RunResearchProcessProjection } from "../src/types.js";
+import { RunRecord } from "../src/types.js";
 
 describe("autonomy metrics", () => {
   it("records run-level autonomy signals without replacing evidence gates", () => {
@@ -32,7 +32,6 @@ describe("autonomy metrics", () => {
       artifactCompletenessRatio: 0.875,
       autoHandoffToRunExperiments: true,
       policyBlocked: false,
-      researchProcess: makeResearchProcess("pass"),
       findings: ["Missing artifacts: result_analysis.json"]
     });
 
@@ -43,9 +42,6 @@ describe("autonomy metrics", () => {
       fitness_signal: 0.7256,
       fitness_signal_source: "eval_harness_overall_score",
       evidence_gates_preserved: true,
-      process_evaluation_status: "pass",
-      process_required_check_count: 1,
-      process_blocker_count: 0,
       retry_attempts_total: 2,
       rollback_count_total: 1,
       backward_jump_count: 1,
@@ -64,8 +60,7 @@ describe("autonomy metrics", () => {
       overallScore: 1,
       artifactCompletenessRatio: 1,
       autoHandoffToRunExperiments: true,
-      policyBlocked: false,
-      researchProcess: makeResearchProcess("pass")
+      policyBlocked: false
     });
     const second = buildRunAutonomyMetrics({
       run: { ...run, id: "run-policy" },
@@ -73,14 +68,11 @@ describe("autonomy metrics", () => {
       artifactCompletenessRatio: 0.5,
       autoHandoffToRunExperiments: false,
       policyBlocked: true,
-      researchProcess: makeResearchProcess("blocked", 1),
       findings: ["Policy gate blocked the workflow contract."]
     });
 
     expect(buildAutonomyAggregateMetrics([first, second])).toMatchObject({
       avg_fitness_signal: 0.7,
-      process_evaluation_pass_rate: 0.5,
-      avg_process_blocker_count: 0.5,
       auto_handoff_rate: 0.5,
       policy_blocked_rate: 0.5,
       dominant_failure_categories: [
@@ -88,19 +80,6 @@ describe("autonomy metrics", () => {
         { category: "none", count: 1 }
       ]
     });
-  });
-
-  it("does not claim evidence gates were preserved when process evaluation is absent", () => {
-    const metrics = buildRunAutonomyMetrics({
-      run: makeRun(),
-      overallScore: 1,
-      artifactCompletenessRatio: 1,
-      autoHandoffToRunExperiments: true,
-      policyBlocked: false
-    });
-
-    expect(metrics.evidence_gates_preserved).toBe(false);
-    expect(metrics.process_evaluation_status).toBe("unmeasured");
   });
 
   it("orders failure categories by bug, prompt, architecture, hyperparameter priority", () => {
@@ -213,23 +192,5 @@ function makeRun(): RunRecord {
       longTermPath: ".autolabos/runs/run-autonomy/memory/long_term.jsonl",
       episodePath: ".autolabos/runs/run-autonomy/memory/episodes.jsonl"
     }
-  };
-}
-
-function makeResearchProcess(
-  status: RunResearchProcessProjection["status"],
-  blockerCount = 0
-): RunResearchProcessProjection {
-  return {
-    version: 1,
-    status,
-    trusted: status === "pass",
-    paper_ready_eligible: status === "pass",
-    required_check_count: 1,
-    passed_required_check_count: status === "pass" ? 1 : 0,
-    blocker_count: blockerCount,
-    reason_codes: blockerCount > 0 ? ["process_blocked"] : [],
-    checks: [],
-    policy_note: "Artifact-backed process test fixture."
   };
 }

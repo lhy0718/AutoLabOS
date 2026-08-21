@@ -12,8 +12,7 @@ export const RESEARCH_MILESTONE_ASSERTION_OPERATORS = [
   "lte",
   "min_items",
   "max_items",
-  "contains",
-  "one_of"
+  "contains"
 ] as const;
 
 export type ResearchMilestoneAssertionOperator = typeof RESEARCH_MILESTONE_ASSERTION_OPERATORS[number];
@@ -299,18 +298,11 @@ function evaluateAssertion(root: unknown, assertion: ResearchMilestoneAssertion)
         ? actual.includes(assertion.expected)
         : Array.isArray(actual) && actual.some((item) => deepEqual(item, assertion.expected));
       break;
-    case "one_of":
-      passed = Array.isArray(assertion.expected)
-        && assertion.expected.some((item) => deepEqual(actual, item));
-      break;
   }
-  const reportedActual = assertion.operator === "min_items" || assertion.operator === "max_items"
-    ? Array.isArray(actual) ? actual.length : actual
-    : actual;
   return {
     ...assertion,
     passed,
-    actual: reportedActual,
+    actual,
     detail: passed ? "Assertion passed." : `Assertion ${assertion.operator} failed.`
   };
 }
@@ -428,17 +420,12 @@ function parseEvidence(
     const expected = raw.expected;
     const numericOperator = operator === "gte" || operator === "lte";
     const itemCountOperator = operator === "min_items" || operator === "max_items";
-    const oneOfOperator = operator === "one_of";
     if (numericOperator && (typeof expected !== "number" || !Number.isFinite(expected))) {
       issues.push(`contract_assertion_expected_invalid:${prefix}:${assertionIndex}`);
       continue;
     }
     if (itemCountOperator
       && (typeof expected !== "number" || !Number.isSafeInteger(expected) || expected < 0)) {
-      issues.push(`contract_assertion_expected_invalid:${prefix}:${assertionIndex}`);
-      continue;
-    }
-    if (oneOfOperator && (!Array.isArray(expected) || expected.length === 0)) {
       issues.push(`contract_assertion_expected_invalid:${prefix}:${assertionIndex}`);
       continue;
     }

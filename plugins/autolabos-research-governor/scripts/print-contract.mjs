@@ -105,7 +105,7 @@ const workflowIntents = [
 
 const contract = {
   pluginName: "autolabos-research-governor",
-  schemaVersion: "3.1",
+  schemaVersion: "3.0",
   primarySurface: "codex_plugin",
   standaloneWorkflowRole: "reference_workflow",
   artifacts: [
@@ -122,23 +122,6 @@ const contract = {
     "TopicProbeDecision",
     "ActiveTopicProbeContract"
   ],
-  projectionArtifacts: [
-    "VenueViabilityReport"
-  ],
-  projectionContracts: {
-    VenueViabilityReport: {
-      authority: "A0_deterministic",
-      decisionScope: "active_candidate",
-      currentEvidenceCeiling: "screening_only",
-      topTierReadinessAllowed: ["blocked", "unresolved"],
-      confirmatoryCandidacyAllowed: ["supported", "unsupported", "unresolved"],
-      confirmatoryCandidacyIndependentFromTopTierReadiness: true,
-      confirmatoryVetoWhenUnsupported: true,
-      topTierReady: false,
-      acceptanceLikelihoodAssessed: false,
-      transitionAuthority: false
-    }
-  },
   sidecarArtifacts: [
     "ModelReviewBundle"
   ],

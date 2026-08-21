@@ -27,8 +27,7 @@ import { RunRecord } from "../src/types.js";
 const topicProbeReviewMocks = vi.hoisted(() => ({
   source: undefined as any,
   handoff: undefined as any,
-  gate: undefined as any,
-  venue: undefined as any
+  gate: undefined as any
 }));
 
 vi.mock("../src/core/topicProbeOutcomeArtifacts.js", async (importOriginal) => {
@@ -63,25 +62,6 @@ vi.mock("../src/core/topicProbeFollowup.js", async (importOriginal) => {
   };
 });
 
-vi.mock("../src/core/venueViability.js", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("../src/core/venueViability.js")>();
-  return {
-    ...actual,
-    buildVenueViabilityReport: (
-      ...args: Parameters<typeof actual.buildVenueViabilityReport>
-    ) =>
-      topicProbeReviewMocks.venue === undefined
-        ? actual.buildVenueViabilityReport(...args)
-        : topicProbeReviewMocks.venue,
-    validateVenueViabilityReport: (
-      ...args: Parameters<typeof actual.validateVenueViabilityReport>
-    ) =>
-      topicProbeReviewMocks.venue === undefined
-        ? actual.validateVenueViabilityReport(...args)
-        : { valid: true, reasons: [], report: topicProbeReviewMocks.venue }
-  };
-});
-
 vi.mock("../src/core/topicProbeReviewGate.js", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../src/core/topicProbeReviewGate.js")>();
   return {
@@ -108,7 +88,6 @@ afterEach(() => {
   topicProbeReviewMocks.source = undefined;
   topicProbeReviewMocks.handoff = undefined;
   topicProbeReviewMocks.gate = undefined;
-  topicProbeReviewMocks.venue = undefined;
   process.chdir(ORIGINAL_CWD);
 });
 
@@ -722,41 +701,12 @@ describe("review node", () => {
       decision: {
         disposition: "promote_to_confirmatory",
         next_action: "start_confirmatory_run",
-        reason_codes: [],
         content_sha256: outcomeHash
       }
     };
-    const outcomeGatePayload = {
-      schema_version: 1,
-      artifact_kind: "topic_probe_outcome_gate",
-      run_id: run.id,
-      research_cycle: run.graph.researchCycle,
-      status: "decided",
-      disposition: "promote_to_confirmatory",
-      outcome_content_sha256: outcomeHash,
-      reason_codes: []
-    };
-    await mkdir(path.join(runDir, "analysis"), { recursive: true });
-    await writeFile(
-      path.join(runDir, "analysis", "topic_probe_outcome_gate.json"),
-      JSON.stringify({
-        ...outcomeGatePayload,
-        content_sha256: hashCanonical(outcomeGatePayload)
-      }),
-      "utf8"
-    );
     topicProbeReviewMocks.handoff = {
       evidence_stage: "confirmatory",
       content_sha256: handoffHash
-    };
-    topicProbeReviewMocks.venue = {
-      candidate_viability: "continue",
-      confirmatory_candidacy: "supported",
-      current_evidence_ceiling: "screening_only",
-      paper_scale_claims_allowed: false,
-      top_tier_ready: false,
-      acceptance_likelihood_assessed: false,
-      content_sha256: "4".repeat(64)
     };
     topicProbeReviewMocks.gate = {
       status: "followup_required",

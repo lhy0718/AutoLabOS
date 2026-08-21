@@ -15,7 +15,6 @@ const WORKFLOW_ARTIFACTS = [
   "TopicProbeDecision",
   "ActiveTopicProbeContract"
 ];
-const PROJECTION_ARTIFACTS = ["VenueViabilityReport"];
 const DISCOVERY_NODES = [
   "collect_papers",
   "analyze_papers",
@@ -216,24 +215,11 @@ describe("AutoLabOS Codex plugin contract", () => {
     );
 
     expect(contract.executableCliIntents).toEqual(executableIds);
-    expect(contract.schemaVersion).toBe("3.1");
+    expect(contract.schemaVersion).toBe("3.0");
     expect(contract.commandIntents).toBeUndefined();
     expect(contract.compatibility).toBeUndefined();
     expect(contract.executableCliIntents).not.toContain("research:discover");
     expect(contract.workflowArtifacts).toEqual(WORKFLOW_ARTIFACTS);
-    expect(contract.projectionArtifacts).toEqual(PROJECTION_ARTIFACTS);
-    expect(contract.projectionContracts?.VenueViabilityReport).toEqual({
-      authority: "A0_deterministic",
-      decisionScope: "active_candidate",
-      currentEvidenceCeiling: "screening_only",
-      topTierReadinessAllowed: ["blocked", "unresolved"],
-      confirmatoryCandidacyAllowed: ["supported", "unsupported", "unresolved"],
-      confirmatoryCandidacyIndependentFromTopTierReadiness: true,
-      confirmatoryVetoWhenUnsupported: true,
-      topTierReady: false,
-      acceptanceLikelihoodAssessed: false,
-      transitionAuthority: false
-    });
     expect(discovery).toMatchObject({
       executionMode: "workflow_native",
       referenceWorkflowNodes: DISCOVERY_NODES,

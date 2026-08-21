@@ -32,7 +32,6 @@ import { parseAnalysisReport } from "../resultAnalysis.js";
 import { parseReadinessRiskArtifact, type ReadinessRiskArtifact } from "../readinessRisks.js";
 import { inspectReferenceAuthorityGate } from "../referenceAuthorityGate.js";
 import { inspectReviewAssuranceArtifacts } from "../reviewInputManifest.js";
-import { buildRunResearchProcessProjection } from "../evaluation/researchProcessEvaluation.js";
 import { buildWorkspaceRunRoot } from "./runPaths.js";
 
 interface ReviewCritiqueProjection {
@@ -156,13 +155,6 @@ export async function buildRunOperatorStatus(input: {
           artifact_refs: []
         })
   ]);
-  const researchProcess = await buildRunResearchProcessProjection({
-    workspaceRoot: input.workspaceRoot,
-    runDir,
-    run: input.run,
-    evidenceAdequacy,
-    reviewAssurance
-  });
   const analysisReady = analysisProjectionActive
     && await hasArtifacts(runDir, ["result_analysis.json", "transition_recommendation.json"]);
   const reviewReady = reviewProjectionActive
@@ -184,8 +176,7 @@ export async function buildRunOperatorStatus(input: {
     && referenceAuthorityGate?.status === "pass"
     && evidenceAdequacy.trusted
     && evidenceAdequacy.paper_evidence_allowed
-    && reviewAssurance.paper_ready_eligible
-    && researchProcess.paper_ready_eligible;
+    && reviewAssurance.paper_ready_eligible;
   const reviewRisks = reviewProjectionActive
     ? await readReadinessRisks(path.join(runDir, "review", "readiness_risks.json"))
     : undefined;
@@ -287,7 +278,6 @@ export async function buildRunOperatorStatus(input: {
     },
     evidence_adequacy: evidenceAdequacy,
     review_assurance: reviewAssurance,
-    research_process: researchProcess,
     network_dependency: networkDependency,
     validation_scope: input.validationScope || "full_run"
   };

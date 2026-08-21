@@ -91,14 +91,6 @@ blocked decision routes back to `generate_hypotheses`.
   contract. It carries the metric, unit, scale, direction, comparator, structured
   effect criterion, deferred candidate IDs, and bounded-probe evidence ceiling.
 
-## Projection Artifact Contract
-
-- `VenueViabilityReport`: the deterministic active-candidate projection of a
-  validated bounded-probe outcome. It exposes continue, pivot, kill, or blocked,
-  keeps the current evidence ceiling at screening-only, and cannot assess
-  acceptance likelihood or grant paper-scale authority. It cannot authorize a
-  confirmatory transition, but an unsupported candidacy must veto one.
-
 ## Sidecar And Operational Artifacts
 
 - `ModelReviewBundle`: exact-gate-bound independent specialist reviews,

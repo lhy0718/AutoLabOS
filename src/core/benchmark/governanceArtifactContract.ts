@@ -30,11 +30,9 @@ export async function validateGovernanceArtifactContract(
   input: ValidateGovernanceArtifactContractInput
 ): Promise<GovernanceArtifactContractReport> {
   const condition = input.condition || "gated";
-  const evidenceBlockedReport = await isEvidenceBlockedReport(input.runDir);
   const requiredArtifacts = uniqueStrings([
     ...requiredArtifactsForCondition(condition, {
-      requireGovernanceConditionArtifact: input.requireGovernanceConditionArtifact ?? true,
-      evidenceBlockedReport
+      requireGovernanceConditionArtifact: input.requireGovernanceConditionArtifact ?? true
     }),
     ...(input.requiredArtifacts || [])
   ]);
@@ -71,7 +69,7 @@ function uniqueStrings(values: string[]): string[] {
 
 function requiredArtifactsForCondition(
   condition: GovernanceBenchmarkConditionName,
-  options: { requireGovernanceConditionArtifact: boolean; evidenceBlockedReport: boolean }
+  options: { requireGovernanceConditionArtifact: boolean }
 ): string[] {
   const required = [
     ...(options.requireGovernanceConditionArtifact ? ["governance_condition.json"] : []),
@@ -85,26 +83,9 @@ function requiredArtifactsForCondition(
     required.push("review/paper_critique.json", "review/decision.json");
   }
   if (condition !== "ungated") {
-    required.push(
-      options.evidenceBlockedReport ? "paper/draft.md" : "paper/main.tex",
-      "paper/evidence_links.json",
-      "paper/paper_readiness.json"
-    );
+    required.push("paper/main.tex", "paper/evidence_links.json", "paper/paper_readiness.json");
   }
   return required;
-}
-
-async function isEvidenceBlockedReport(runDir: string): Promise<boolean> {
-  try {
-    const readiness = JSON.parse(
-      await fs.readFile(path.join(runDir, "paper", "paper_readiness.json"), "utf8")
-    ) as Record<string, unknown>;
-    return readiness.paper_ready === false
-      && readiness.readiness_state === "evidence_blocked"
-      && readiness.publication_artifact_type === "evidence_blocked_report";
-  } catch {
-    return false;
-  }
 }
 
 async function nonEmptyArtifactExists(filePath: string): Promise<boolean> {

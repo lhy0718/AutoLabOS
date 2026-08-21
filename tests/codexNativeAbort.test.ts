@@ -15,12 +15,12 @@ describe("CodexNativeClient abort cleanup", () => {
       })
     }));
 
-    let markFetchStarted: (() => void) | undefined;
+    let markFetchStarted!: () => void;
     const fetchStarted = new Promise<void>((resolve) => {
       markFetchStarted = resolve;
     });
     const fetchMock = vi.fn((_input: RequestInfo | URL, init?: RequestInit) => {
-      markFetchStarted?.();
+      markFetchStarted();
       const signal = init?.signal;
       return new Promise<Response>((_resolve, reject) => {
         if (signal?.aborted) {

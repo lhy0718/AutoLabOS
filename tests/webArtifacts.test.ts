@@ -56,20 +56,4 @@ describe("web artifacts", () => {
 
     expect(artifacts.map((item) => item.path)).toEqual(["stable.json"]);
   });
-
-  it("rejects run-id traversal and symbolic-link escapes", async () => {
-    const cwd = await fs.mkdtemp(path.join(os.tmpdir(), "autolabos-artifact-symlink-"));
-    const paths = resolveAppPaths(cwd);
-    await ensureScaffold(paths);
-    const runId = "run-symlink";
-    const runDir = path.join(paths.runsDir, runId);
-    const outsidePath = path.join(cwd, "outside.json");
-    await fs.mkdir(runDir, { recursive: true });
-    await fs.writeFile(outsidePath, '{"private":true}\n', "utf8");
-    await fs.symlink(outsidePath, path.join(runDir, "escape.json"));
-
-    expect(() => resolveRunArtifactPath(paths, "../outside", "file.json")).toThrow("Invalid run id");
-    await expect(readRunArtifact(paths, runId, "escape.json")).rejects.toThrow("symbolic link");
-    expect((await listRunArtifacts(paths, runId)).map((item) => item.path)).not.toContain("escape.json");
-  });
 });

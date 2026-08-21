@@ -244,7 +244,6 @@ async function buildMetaHarnessContext(input: {
     promptTargetMap.push(...await collectPromptTargetMapEntries(runRoot, run.id));
 
     const paperArtifactPaths = [
-      path.join(runRoot, "run_status.json"),
       path.join(runRoot, "paper", "paper_readiness.json"),
       path.join(runRoot, "paper", "paper_critique.json"),
       path.join(runRoot, "paper", "readiness_risks.json"),
@@ -288,9 +287,8 @@ async function buildMetaHarnessContext(input: {
 
 async function writeTaskFile(contextDir: string): Promise<void> {
   const body = [
-    "당신은 harness 엔지니어입니다. 위의 소스 코드, 실행 traces, 다차원 과정 평가를 모두 읽으세요.",
-    "단일 점수나 paper_readiness.overall_score를 직접 최적화하지 마세요. 점수와 무관하게 실패한 research_process check 또는 명시된 검증 결함 하나를 원인 노드에서 고치는 프롬프트 개선안을 제안하세요.",
-    "각 변경은 고칠 diagnostic id/reason code, 예상되는 관찰 변화, 같은 검증을 다시 실행하는 조건을 가져야 합니다. 문구를 꾸며 점수만 높이는 변경은 금지합니다.",
+    "당신은 harness 엔지니어입니다. 위의 소스 코드, 실행 traces, 점수를 모두 읽으세요.",
+    "paper_readiness.overall_score를 높일 수 있는 노드 프롬프트 파일의 개선안을 하나 제안하세요.",
     "review/node_strengthening_recommendations.json 또는 review/paper_scale_diagnostics.json이 있으면, 그 artifact가 지목한 target_node와 recheck_condition을 우선 반영하세요.",
     "prompt_target_map.json이 있으면, target_node가 직접 node-prompts 파일을 갖지 않는 경우에도 recommended_prompt_node를 사용해 가장 가까운 강화 가능 프롬프트로 결함을 되돌리세요.",
     "paper/render_validation.json, paper/compile_report.json, paper/submission_validation.json, paper/scientific_validation.json, paper/manuscript_quality_gate.json, paper/gate_decision.json이 있으면 템플릿, 인용, BibTeX/style 파일, 표/그림, page-budget, manuscript-quality, scientific-quality 결함도 원인 노드로 되돌려 분석하세요.",
@@ -400,7 +398,6 @@ async function copyExternalRunContexts(input: {
 
 const EXTERNAL_CONTEXT_ARTIFACTS = [
   "events.jsonl",
-  "run_status.json",
   "result_analysis.json",
   "result_analysis_synthesis.json",
   "baseline_comparison.json",
@@ -461,30 +458,6 @@ function nodeArtifactPathsForMetaHarnessNode(node: MetaHarnessNode, runRoot: str
 async function collectPromptTargetMapEntries(runRoot: string, runId: string, artifactPrefix = ""): Promise<PromptTargetMapEntry[]> {
   const entries: PromptTargetMapEntry[] = [];
   const coveredDiagnosticKeys = new Set<string>();
-  const runStatus = await readJsonObjectIfPresent(path.join(runRoot, "run_status.json"));
-  const researchProcess = isRecord(runStatus?.research_process) ? runStatus.research_process : undefined;
-  const processChecks = Array.isArray(researchProcess?.checks) ? researchProcess.checks.filter(isRecord) : [];
-  for (const processCheck of processChecks) {
-    const checkId = asString(processCheck.id);
-    const checkStatus = asString(processCheck.status);
-    const required = processCheck.required === true;
-    const promptNode = mapResearchProcessCheckToPromptNode(checkId);
-    if (!required || checkStatus === "pass" || !promptNode) {
-      continue;
-    }
-    const reasonCodes = asStringArray(processCheck.reason_codes) ?? [];
-    entries.push({
-      run_id: runId,
-      source_artifact: `${artifactPrefix}run_status.json`,
-      target_node: promptNode,
-      recommended_prompt_node: promptNode,
-      prompt_file: `node-prompts/${promptNode}.md`,
-      priority: checkStatus === "fail" || checkStatus === "invalid" ? "high" : "medium",
-      diagnostic_ids: [checkId, ...reasonCodes].filter(Boolean),
-      problem_summary: `Research-process check ${checkId} is ${checkStatus}; repair the artifact-backed process failure without optimizing a manuscript score.`,
-      recheck_condition: `Rebuild run_status.json and require research_process check ${checkId} to report pass.`
-    });
-  }
   const strengtheningPath = path.join(runRoot, "review", "node_strengthening_recommendations.json");
   const strengthening = await readJsonObjectIfPresent(strengtheningPath);
   const recommendations = Array.isArray(strengthening?.recommendations) ? strengthening.recommendations : [];
@@ -710,24 +683,6 @@ function mapStrengtheningTargetToPromptNode(targetNode: string): MetaHarnessNode
     return "generate_hypotheses";
   }
   return undefined;
-}
-
-function mapResearchProcessCheckToPromptNode(checkId: string): MetaHarnessNode | undefined {
-  switch (checkId) {
-    case "hypothesis_contract":
-    case "objective_acceptance_separation":
-    case "plan_execution_alignment":
-    case "execution_grounding":
-      return "design_experiments";
-    case "hypothesis_disposition":
-    case "evidence_adequacy":
-      return "analyze_results";
-    case "independent_validation":
-    case "claim_evidence_chain":
-      return "review";
-    default:
-      return undefined;
-  }
 }
 
 async function readJsonObjectIfPresent(filePath: string): Promise<Record<string, unknown> | undefined> {

@@ -41,10 +41,6 @@
     "scripts/live-validation-start-run.py",
     "scripts/live-validation-resume-check.py",
     "scripts/live-validation-approve-and-run-next.py",
-    "scripts/validate-docker-execution-envelope.mjs",
-    "scripts/validate-literature-evidence.mjs",
-    "scripts/verify-execution-envelope-artifacts.mjs",
-    "scripts/verify-repository-anchored-freeze.mjs",
     "README.md",
     "docs/README*.md",
     "LICENSE",
@@ -70,10 +66,6 @@
     "validation:start-live": "python3 scripts/live-validation-start-run.py",
     "validation:resume-check": "python3 scripts/live-validation-resume-check.py",
     "validation:continue": "python3 scripts/live-validation-approve-and-run-next.py",
-    "validation:docker-envelope": "node scripts/validate-docker-execution-envelope.mjs",
-    "validation:execution-receipt": "node scripts/verify-execution-envelope-artifacts.mjs",
-    "validation:literature-evidence": "node scripts/validate-literature-evidence.mjs",
-    "validation:repository-anchor": "node scripts/verify-repository-anchored-freeze.mjs",
     "validate:harness": "tsx src/cli/validateHarness.ts",
     "validate:research-governance": "node scripts/validate-research-governance-e2e.mjs",
     "validate:plugin-bridge": "node scripts/validate-plugin-bridge-e2e.mjs",
@@ -93,7 +85,6 @@
     "test:smoke:natural-composite-all": "bash tests/smoke/run_natural_composite_run_all_execute_and_verify_artifacts.sh",
     "test:smoke:natural-llm-composite-all": "bash tests/smoke/run_natural_llm_composite_run_all_execute_and_verify_artifacts.sh",
     "test:smoke:ci": "CI=true bash tests/smoke/run_ci_smoke.sh",
-    "audit:security": "npm audit --audit-level=moderate && npm --prefix web audit --audit-level=moderate",
     "prepublic:snapshot": "npm test -- tests/publicCodeSanitization.test.ts",
     "public:snapshot": "node scripts/export-public-snapshot.mjs",
     "prepack": "npm run build",
@@ -115,11 +106,5 @@
     "typescript": "^5.8.2",
     "vite": "^6.4.3",
     "vitest": "^3.2.7"
-  },
-  "allowScripts": {
-    "better-sqlite3@12.8.0": true,
-    "esbuild@0.28.1": true,
-    "esbuild@0.25.12": true,
-    "fsevents@2.3.3": true
   }
 }

@@ -12,9 +12,6 @@ import {
   ACL_BIBLIOGRAPHY_STYLE,
   inspectAclTemplateSurface
 } from "../latex/aclTemplate.js";
-import { hashCanonical } from "../researchFunnel.js";
-import { loadResearchFunnelProjection } from "../runs/researchFunnelProjection.js";
-import { VENUE_VIABILITY_REPORT_RELATIVE_PATH } from "../venueViability.js";
 
 export interface HarnessValidationIssue {
   code: string;
@@ -89,31 +86,6 @@ export async function validateRunArtifactStructure(
   const resultAnalysisPath = path.join(runDir, "result_analysis.json");
   const transitionPath = path.join(runDir, "transition_recommendation.json");
   const reviewDecisionPath = path.join(runDir, "review", "decision.json");
-  const topicProbeOutcomeGatePath = path.join(
-    runDir,
-    "analysis",
-    "topic_probe_outcome_gate.json"
-  );
-  const venueViabilityPath = path.join(runDir, VENUE_VIABILITY_REPORT_RELATIVE_PATH);
-  const topicProbeOutcomeGate = await readJsonObjectIfPresent(
-    topicProbeOutcomeGatePath,
-    runId,
-    issues
-  );
-  if (
-    topicProbeOutcomeGate
-    && !hasTrustedCanonicalSelfHash(topicProbeOutcomeGate)
-  ) {
-    issues.push({
-      code: "topic_probe_outcome_gate_untrusted",
-      message: "Topic probe outcome gate failed canonical self-hash validation.",
-      filePath: topicProbeOutcomeGatePath,
-      runId
-    });
-  }
-  const venueViabilityReportRequired = hasTrustedVenueViabilityContractMarker(
-    topicProbeOutcomeGate
-  );
 
   const runStatusArtifact = await readJsonObjectIfPresent(runStatusPath, runId, issues);
   const validationScope = resolveValidationScope(runStatusArtifact);
@@ -470,36 +442,6 @@ export async function validateRunArtifactStructure(
         filePath: resultAnalysisPath,
         runId
       });
-    }
-  }
-
-  const venueViabilityPresent = await fileExists(venueViabilityPath);
-  if (venueViabilityReportRequired || venueViabilityPresent) {
-    checked.add("venue_viability_report");
-    if (!venueViabilityPresent) {
-      issues.push({
-        code: "venue_viability_report_missing",
-        message: "This run declared VenueViabilityReport contract v1 but the report is missing.",
-        filePath: venueViabilityPath,
-        runId
-      });
-    } else {
-      const researchFunnel = await loadResearchFunnelProjection(runDir, { runId });
-      if (!researchFunnel) {
-        issues.push({
-          code: "venue_viability_report_unbound",
-          message: "Venue viability artifacts exist outside a verifiable topic-discovery run.",
-          filePath: venueViabilityPath,
-          runId
-        });
-      } else if (researchFunnel.venueViability.status === "invalid") {
-        issues.push({
-          code: "venue_viability_report_invalid",
-          message: `Venue viability report failed source-chain validation: ${researchFunnel.venueViability.reasonCodes.join(", ") || "unknown reason"}.`,
-          filePath: venueViabilityPath,
-          runId
-        });
-      }
     }
   }
 
@@ -1278,29 +1220,6 @@ function validateRunStatusPayload(
       runId
     });
   }
-  if (payload.research_process !== undefined) {
-    const process = isRecord(payload.research_process) ? payload.research_process : undefined;
-    const validStatus = process && ["unmeasured", "partial", "pass", "blocked"].includes(asString(process.status));
-    const checks = process && Array.isArray(process.checks) ? process.checks : undefined;
-    const checksValid = checks?.every((item) => {
-      if (!isRecord(item)) {
-        return false;
-      }
-      return Boolean(asString(item.id))
-        && ["pass", "fail", "invalid", "unmeasured", "not_applicable"].includes(asString(item.status))
-        && typeof item.required === "boolean"
-        && Array.isArray(item.reason_codes)
-        && Array.isArray(item.artifact_refs);
-    });
-    if (!process || process.version !== 1 || !validStatus || !checks || !checksValid) {
-      issues.push({
-        code: "run_status_research_process_invalid",
-        message: "run_status.json research_process must declare version=1, a known status, and well-formed checks.",
-        filePath,
-        runId
-      });
-    }
-  }
 }
 
 function validateRunCompletenessChecklistPayload(
@@ -1860,28 +1779,6 @@ function parseJsonRecord(raw: string): Record<string, unknown> | undefined {
   } catch {
     return undefined;
   }
-}
-
-function hasTrustedVenueViabilityContractMarker(
-  gate: Record<string, unknown> | undefined
-): boolean {
-  if (
-    !gate
-    || gate.schema_version !== 1
-    || gate.artifact_kind !== "topic_probe_outcome_gate"
-    || gate.venue_viability_report_contract_version !== 1
-  ) {
-    return false;
-  }
-  return hasTrustedCanonicalSelfHash(gate);
-}
-
-function hasTrustedCanonicalSelfHash(
-  artifact: Record<string, unknown>
-): boolean {
-  if (typeof artifact.content_sha256 !== "string") return false;
-  const { content_sha256: contentSha256, ...payload } = artifact;
-  return hashCanonical(payload) === contentSha256;
 }
 
 async function readFileIfExists(filePath: string): Promise<string | undefined> {

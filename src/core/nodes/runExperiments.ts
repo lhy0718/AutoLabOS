@@ -58,6 +58,7 @@ import {
   setSentinelFindings,
   setMetricsState
 } from "../runExperimentsPanel.js";
+import { wrapCommandForExecutionProfile } from "../../runtime/executionProfile.js";
 import { parseMarkdownRunBriefSections, type MarkdownRunBriefSections } from "../runs/runBriefParser.js";
 import {
   loadResearchBriefSnapshot,
@@ -113,11 +114,6 @@ import {
   loadEvidenceAdequacyContractFromRunDir,
   resolveVerifiedEvidenceRefs
 } from "../analysis/evidenceAdequacyArtifacts.js";
-import {
-  buildExecutionEnvelope,
-  executeInEnvelope
-} from "../experiments/executionEnvelope.js";
-import type { AciExecutionEnvelopePhase, AciObservation } from "../../tools/aci.js";
 type SupplementalProfileName = "quick_check" | "confirmatory";
 
 interface ManagedSupplementalProfile {
@@ -356,8 +352,7 @@ export function createRunExperimentsNode(deps: NodeExecutionDeps): GraphNodeHand
 
       let topicProbeComputeGovernor: TopicProbeComputeGovernor | undefined;
 
-      const runDir = path.join(process.cwd(), ".autolabos", "runs", run.id);
-      const defaultMetricsPath = path.join(runDir, "metrics.json");
+      const defaultMetricsPath = path.join(process.cwd(), ".autolabos", "runs", run.id, "metrics.json");
       const failureMemory = FailureMemory.forRun(run.id);
       const triageAttempts: RunExperimentsTriageAttempt[] = [];
       let executionPlan: RunExperimentsExecutionPlan | undefined;
@@ -558,25 +553,6 @@ export function createRunExperimentsNode(deps: NodeExecutionDeps): GraphNodeHand
         };
       }
 
-      const declaredPublicArtifacts = resolveMaybeRelativeArray(
-        await runContext.get<string[]>("implement_experiments.public_artifacts"),
-        process.cwd()
-      );
-      const executionInputArtifactPaths = [
-        path.join(runDir, "experiment_contract.json"),
-        path.join(runDir, "experiment_portfolio.json"),
-        ...(resolved.commandArtifactPath ? [resolved.commandArtifactPath] : []),
-        ...declaredPublicArtifacts,
-        ...(implementPublicDir
-          ? [
-              path.join(implementPublicDir, "run_experiment.py"),
-              path.join(implementPublicDir, "experiment.py"),
-              path.join(implementPublicDir, "experiment_config.json"),
-              path.join(implementPublicDir, "environment.lock.json")
-            ]
-          : [])
-      ];
-
       try {
         topicProbeComputeGovernor = await initializeTopicProbeComputeGovernor({
           run,
@@ -607,7 +583,11 @@ export function createRunExperimentsNode(deps: NodeExecutionDeps): GraphNodeHand
 
       executionPlan = buildRunExperimentsExecutionPlan({
         trigger,
-        command: resolved.command,
+        command: wrapCommandForExecutionProfile({
+          profile: deps.executionProfile || "local",
+          command: resolved.command,
+          cwd: resolved.cwd
+        }),
         cwd: resolved.cwd,
         metricsPath: resolved.metricsPath,
         source: resolved.source,
@@ -615,12 +595,22 @@ export function createRunExperimentsNode(deps: NodeExecutionDeps): GraphNodeHand
         budgetProfile: comparisonContract?.budget_profile,
         evaluatorContractId: comparisonContract?.evaluator_contract_id,
         baselineCandidateIds: comparisonContract?.baseline_candidate_ids,
-        testCommand: resolved.testCommand,
+        testCommand: resolved.testCommand
+          ? wrapCommandForExecutionProfile({
+              profile: deps.executionProfile || "local",
+              command: resolved.testCommand,
+              cwd: resolved.testCwd || resolved.cwd
+            })
+          : undefined,
         testCwd: resolved.testCwd,
         portfolio: experimentPortfolio,
         supplementalProfiles: managedSupplementalPlan?.profiles.map((profile) => ({
           profile: profile.profile,
-          command: profile.command,
+          command: wrapCommandForExecutionProfile({
+            profile: deps.executionProfile || "local",
+            command: profile.command,
+            cwd: profile.workingDir
+          }),
           metricsPath: profile.metricsPath
         }))
       });
@@ -630,7 +620,13 @@ export function createRunExperimentsNode(deps: NodeExecutionDeps): GraphNodeHand
       });
       await persistPanelState();
 
-      const profiledTestCommand = resolved.testCommand;
+      const profiledTestCommand = resolved.testCommand
+        ? wrapCommandForExecutionProfile({
+            profile: deps.executionProfile || "local",
+            command: resolved.testCommand,
+            cwd: resolved.testCwd || resolved.cwd
+          })
+        : undefined;
       const preflightToolCallsUsed = profiledTestCommand ? 1 : 0;
 
       if (profiledTestCommand) {
@@ -646,22 +642,11 @@ export function createRunExperimentsNode(deps: NodeExecutionDeps): GraphNodeHand
           }
         });
 
-        const testObs = await executeRunCommandWithEnvelope({
-          deps,
-          run,
-          phase: "preflight",
-          attempt: 1,
-          artifactStem: "preflight_1",
-          command: profiledTestCommand,
-          cwd: resolved.testCwd || resolved.cwd,
-          metricsPath: resolved.metricsPath,
-          expectedOutputRequired: false,
-          inputArtifactPaths: executionInputArtifactPaths,
-          includeProviderSecret: false,
-          requestedGpuCount: 0,
-          scope: "tests",
+        const testObs = await deps.aci.runTests(
+          profiledTestCommand,
+          resolved.testCwd || resolved.cwd,
           abortSignal
-        });
+        );
         if (testObs.status !== "ok") {
           const policyBlock = extractPolicyBlock(testObs);
           triageAttempts.push(
@@ -822,6 +807,11 @@ export function createRunExperimentsNode(deps: NodeExecutionDeps): GraphNodeHand
         resolveRunExperimentsBudgetTimeoutSec(deps.config)
       );
       primaryCommand = await appendPythonOverwriteOutputArgIfAccepted(primaryCommand, resolved.cwd);
+      primaryCommand = wrapCommandForExecutionProfile({
+        profile: deps.executionProfile || "local",
+        command: primaryCommand,
+        cwd: resolved.cwd
+      });
       primaryCommand = withModelDownloadEnvIfDeclared(primaryCommand, deps.config);
       if (executionPlan && executionPlan.command !== primaryCommand) {
         executionPlan = {
@@ -1060,29 +1050,7 @@ export function createRunExperimentsNode(deps: NodeExecutionDeps): GraphNodeHand
 
         const commandStartedAtMs = Date.now();
         latestCommandStartedAtMs = commandStartedAtMs;
-        obs = await executeRunCommandWithEnvelope({
-          deps,
-          run,
-          phase: primaryAttemptsUsed > 1 ? "primary_retry" : "primary",
-          attempt: attemptNumber,
-          artifactStem: primaryAttemptsUsed > 1
-            ? `primary_retry_${attemptNumber}`
-            : "primary_1",
-          command: primaryCommand,
-          cwd: resolved.cwd,
-          metricsPath: resolved.metricsPath,
-          expectedOutputRequired: true,
-          inputArtifactPaths: executionInputArtifactPaths,
-          includeProviderSecret: true,
-          requestedGpuCount:
-            topicProbeComputeGovernor?.estimatedGpuCount
-            ?? resolved.requestedGpuCount
-            ?? resolved.visibleGpuDeviceIds?.length
-            ?? 0,
-          visibleGpuDeviceIds: resolved.visibleGpuDeviceIds,
-          scope: "command",
-          abortSignal
-        });
+        obs = await deps.aci.runCommand(primaryCommand, resolved.cwd, abortSignal);
         logFile = await writeRunArtifact(
           run,
           primaryAttemptsUsed === 1
@@ -4406,135 +4374,6 @@ async function maybeRunManagedSupplementalProfiles(input: {
   };
 }
 
-async function executeRunCommandWithEnvelope(input: {
-  deps: NodeExecutionDeps;
-  run: Parameters<GraphNodeHandler["execute"]>[0]["run"];
-  phase: AciExecutionEnvelopePhase;
-  attempt: number;
-  artifactStem: string;
-  command: string;
-  cwd: string;
-  metricsPath: string;
-  expectedOutputRequired: boolean;
-  inputArtifactPaths: string[];
-  includeProviderSecret: boolean;
-  requestedGpuCount?: number;
-  visibleGpuDeviceIds?: string[];
-  scope: "command" | "tests";
-  abortSignal?: AbortSignal;
-}): Promise<AciObservation> {
-  const workspaceRoot = process.cwd();
-  const runDir = path.join(workspaceRoot, ".autolabos", "runs", input.run.id);
-  let envelope: Awaited<ReturnType<typeof buildExecutionEnvelope>>;
-  try {
-    envelope = await buildExecutionEnvelope({
-      workspaceRoot,
-      runId: input.run.id,
-      phase: input.phase,
-      attempt: input.attempt,
-      executionProfile: input.deps.executionProfile || "local",
-      containerImage:
-        input.deps.executionProfile === "docker"
-          ? process.env.AUTOLABOS_DOCKER_IMAGE?.trim()
-          : undefined,
-      command: input.command,
-      cwd: input.cwd,
-      writableRoots: [runDir, input.cwd],
-      secretFileMounts: input.includeProviderSecret
-        ? resolveDockerSecretFileMounts({
-            executionProfile: input.deps.executionProfile,
-            command: input.command,
-            networkPurpose: input.deps.config.experiments?.network_purpose
-          })
-        : [],
-      expectedOutputs: input.expectedOutputRequired
-        ? [{ path: input.metricsPath, required: true }]
-        : [],
-      inputArtifactPaths: input.inputArtifactPaths,
-      timeoutMs: (resolveRunExperimentsBudgetTimeoutSec(input.deps.config) || 3_600) * 1_000,
-      networkPolicy: input.deps.config.experiments?.network_policy || "blocked",
-      networkPurpose: input.deps.config.experiments?.network_purpose,
-      requestedGpuCount: input.requestedGpuCount,
-      visibleGpuDeviceIds: input.visibleGpuDeviceIds
-    });
-  } catch (error) {
-    const code = normalizeExecutionEnvelopeFailureCode(error);
-    await writeRunArtifact(
-      input.run,
-      `execution/envelope_failures/${input.artifactStem}.json`,
-      `${JSON.stringify({
-        version: 1,
-        run_id: input.run.id,
-        phase: input.phase,
-        attempt: input.attempt,
-        status: "blocked",
-        reason_codes: [code]
-      }, null, 2)}\n`
-    );
-    return {
-      status: "error",
-      stderr: `Execution envelope blocked: ${code}`,
-      exit_code: 1,
-      duration_ms: 0
-    };
-  }
-
-  await writeRunArtifact(
-    input.run,
-    `execution/envelopes/${input.artifactStem}.json`,
-    `${JSON.stringify(envelope.artifact, null, 2)}\n`
-  );
-  const result = await executeInEnvelope({
-    aci: input.deps.aci,
-    envelope,
-    scope: input.scope,
-    signal: input.abortSignal
-  });
-  await writeRunArtifact(
-    input.run,
-    `execution/receipts/${input.artifactStem}.json`,
-    `${JSON.stringify(result.receipt, null, 2)}\n`
-  );
-  if (input.phase === "primary" || input.phase === "primary_retry") {
-    await writeRunArtifact(
-      input.run,
-      "execution/execution_envelope.json",
-      `${JSON.stringify(envelope.artifact, null, 2)}\n`
-    );
-    await writeRunArtifact(
-      input.run,
-      "execution/execution_receipt.json",
-      `${JSON.stringify(result.receipt, null, 2)}\n`
-    );
-  }
-  return result.observation;
-}
-
-function resolveDockerSecretFileMounts(input: {
-  executionProfile: NodeExecutionDeps["executionProfile"];
-  command: string;
-  networkPurpose: NodeExecutionDeps["config"]["experiments"]["network_purpose"];
-}): Array<{ sourcePath: string; targetName: string }> {
-  if (
-    input.executionProfile !== "docker"
-    || input.networkPurpose !== "remote_inference"
-    || !input.command.includes("/run/secrets/autolabos.env")
-  ) {
-    return [];
-  }
-  const sourcePath = process.env.AUTOLABOS_DOCKER_SECRET_FILE?.trim();
-  return sourcePath
-    ? [{ sourcePath, targetName: "autolabos.env" }]
-    : [];
-}
-
-function normalizeExecutionEnvelopeFailureCode(error: unknown): string {
-  const message = error instanceof Error ? error.message : String(error);
-  return /^[a-z0-9_]{3,96}$/u.test(message)
-    ? message
-    : "execution_envelope_invalid";
-}
-
 async function runManagedSupplementalProfile(input: {
   deps: NodeExecutionDeps;
   run: Parameters<GraphNodeHandler["execute"]>[0]["run"];
@@ -4624,32 +4463,7 @@ async function runManagedSupplementalProfile(input: {
   });
 
   const cwd = input.profile.workingDir;
-  const obs = await executeRunCommandWithEnvelope({
-    deps: input.deps,
-    run: input.run,
-    phase: "supplemental",
-    attempt: input.profile.profile === "quick_check" ? 1 : 2,
-    artifactStem: `supplemental_${input.profile.profile}`,
-    command: input.profile.command,
-    cwd,
-    metricsPath: input.profile.metricsPath,
-    expectedOutputRequired: true,
-    includeProviderSecret: true,
-    inputArtifactPaths: [
-      path.join(process.cwd(), ".autolabos", "runs", input.run.id, "experiment_contract.json"),
-      path.join(process.cwd(), ".autolabos", "runs", input.run.id, "experiment_portfolio.json"),
-      path.join(cwd, "run_experiment.py"),
-      path.join(cwd, "experiment_config.json"),
-      path.join(cwd, "environment.lock.json")
-    ],
-    requestedGpuCount:
-      supplementalEstimatedGpuCount
-      ?? supplementalGpuMetadata?.visibleGpuDeviceIds?.length
-      ?? 0,
-    visibleGpuDeviceIds: supplementalGpuMetadata?.visibleGpuDeviceIds,
-    scope: "command",
-    abortSignal: input.abortSignal
-  });
+  const obs = await input.deps.aci.runCommand(input.profile.command, cwd, input.abortSignal);
   const logFile = await writeRunArtifact(
     input.run,
     `exec_logs/run_experiments_${input.profile.profile}.txt`,
@@ -5165,12 +4979,6 @@ function resolveMaybeRelative(value: string | undefined, workspaceRoot: string):
     return value;
   }
   return path.join(workspaceRoot, value);
-}
-
-function resolveMaybeRelativeArray(values: string[] | undefined, workspaceRoot: string): string[] {
-  return (values || [])
-    .map((value) => resolveMaybeRelative(value, workspaceRoot))
-    .filter((value): value is string => Boolean(value));
 }
 
 function withModelDownloadEnvIfDeclared(
@@ -6945,10 +6753,6 @@ async function persistRunVerifierReport(
 ): Promise<PublishPublicRunOutputsResult> {
   const reportPath = await writeRunArtifact(run, "run_experiments_verify_report.json", JSON.stringify(report, null, 2));
   const runDir = path.join(process.cwd(), ".autolabos", "runs", run.id);
-  const executionEnvelopePath = path.join(runDir, "execution", "execution_envelope.json");
-  const executionReceiptPath = path.join(runDir, "execution", "execution_receipt.json");
-  const hasExecutionEnvelope = await fileExists(executionEnvelopePath);
-  const hasExecutionReceipt = await fileExists(executionReceiptPath);
   const intermediateArtifactCapture = await buildIntermediateArtifactCaptureManifest({
     runId: run.id,
     runDir,
@@ -6979,25 +6783,7 @@ async function persistRunVerifierReport(
         role: "log",
         required: false,
         parseAs: "text"
-      },
-      ...(hasExecutionEnvelope
-        ? [{
-            artifactId: "execution_envelope",
-            filePath: executionEnvelopePath,
-            role: "verification" as const,
-            required: report.status === "pass",
-            parseAs: "json" as const
-          }]
-        : []),
-      ...(hasExecutionReceipt
-        ? [{
-            artifactId: "execution_receipt",
-            filePath: executionReceiptPath,
-            role: "verification" as const,
-            required: report.status === "pass",
-            parseAs: "json" as const
-          }]
-        : [])
+      }
     ]
   });
   const intermediateArtifactCapturePath = await writeRunArtifact(
@@ -7019,19 +6805,7 @@ async function persistRunVerifierReport(
       {
         sourcePath: intermediateArtifactCapturePath,
         targetRelativePath: "run_experiments_intermediate_artifacts.json"
-      },
-      ...(hasExecutionEnvelope
-        ? [{
-            sourcePath: executionEnvelopePath,
-            targetRelativePath: "execution_envelope.json"
-          }]
-        : []),
-      ...(hasExecutionReceipt
-        ? [{
-            sourcePath: executionReceiptPath,
-            targetRelativePath: "execution_receipt.json"
-          }]
-        : [])
+      }
     ]
   });
   await runContext.put("run_experiments.last_report", report);

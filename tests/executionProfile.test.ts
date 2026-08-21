@@ -2,7 +2,8 @@ import { describe, expect, it } from "vitest";
 
 import {
   detectExecutionProfile,
-  executionProfileToDependencyMode
+  executionProfileToDependencyMode,
+  wrapCommandForExecutionProfile
 } from "../src/runtime/executionProfile.js";
 
 describe("detectExecutionProfile", () => {
@@ -22,18 +23,6 @@ describe("detectExecutionProfile", () => {
       env: {
         DOCKER: "autolabos-runtime"
       } as NodeJS.ProcessEnv,
-      commandExists: async () => true
-    });
-
-    expect(profile).toBe("docker");
-  });
-
-  it("detects docker when an ephemeral execution image is configured", async () => {
-    const profile = await detectExecutionProfile({
-      env: {
-        AUTOLABOS_DOCKER_IMAGE: "research-runtime:local"
-      } as NodeJS.ProcessEnv,
-      dockerEnvFile: "/tmp/nonexistent-dockerenv-for-test",
       commandExists: async () => true
     });
 
@@ -67,5 +56,20 @@ describe("executionProfile helpers", () => {
     expect(executionProfileToDependencyMode("docker")).toBe("docker");
     expect(executionProfileToDependencyMode("remote")).toBe("remote_gpu");
     expect(executionProfileToDependencyMode("plan_only")).toBe("plan_only");
+  });
+
+  it("wraps docker commands with docker exec and an explicit working directory", () => {
+    const wrapped = wrapCommandForExecutionProfile({
+      profile: "docker",
+      command: "npm run experiment",
+      cwd: "/workspace/project",
+      env: {
+        DOCKER: "runner-container"
+      } as NodeJS.ProcessEnv
+    });
+
+    expect(wrapped).toContain("docker exec");
+    expect(wrapped).toContain("runner-container");
+    expect(wrapped).toContain("cd '/workspace/project' && npm run experiment");
   });
 });

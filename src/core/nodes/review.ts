@@ -55,7 +55,6 @@ import {
   resolveWritePaperResultsContract
 } from "./writePaper.js";
 import { resolveResearchRunModeGuard } from "../runs/researchRunModeGuard.js";
-import { withTopicProbePromotionSourceLock } from "../topicProbeFollowupRun.js";
 import {
   loadTopicProbeOutcomeArtifacts,
   TOPIC_PROBE_OUTCOME_RELATIVE_PATH
@@ -71,13 +70,6 @@ import {
   validateTopicProbeReviewGate,
   type TopicProbeReviewGateArtifact
 } from "../topicProbeReviewGate.js";
-import {
-  buildVenueViabilityReport,
-  validateVenueViabilityReport,
-  VENUE_VIABILITY_REPORT_RELATIVE_PATH,
-  type VenueViabilityReport
-} from "../venueViability.js";
-import { validateTopicProbeOutcomeGateProjection } from "../runs/researchFunnelProjection.js";
 import {
   reassessEvidenceAdequacyArtifacts,
   type EvidenceAdequacyAuthorization
@@ -358,9 +350,6 @@ export function createReviewNode(deps: NodeExecutionDeps): GraphNodeHandler {
               valid: topicProbeReviewState.valid,
               reasons: topicProbeReviewState.reasons,
               decision: topicProbeReviewState.decision ?? null,
-              venue_viability: topicProbeReviewState.venueViability ?? null,
-              venue_viability_repair_reasons:
-                topicProbeReviewState.venueViabilityRepairReasons,
               gate: topicProbeReviewState.gate,
               handoff: topicProbeReviewState.handoff ?? null
             }
@@ -671,7 +660,6 @@ export function createReviewNode(deps: NodeExecutionDeps): GraphNodeHandler {
           ...(topicProbeReviewState
             ? [
                 { label: "Topic probe review gate", path: "review/topic_probe_gate.json" },
-                { label: "Venue viability", path: VENUE_VIABILITY_REPORT_RELATIVE_PATH },
                 ...(topicProbeReviewState.handoff
                   ? [{ label: "Topic probe follow-up handoff", path: "review/topic_probe_followup_handoff.json" }]
                   : []),
@@ -872,12 +860,6 @@ export function createReviewNode(deps: NodeExecutionDeps): GraphNodeHandler {
       await runContextMemory.put("review.meta_review", effectivePanel.meta_review || null);
       await runContextMemory.put("review.paper_critique", preDraftCritique);
       await runContextMemory.put("review.manuscript_type", preDraftCritique.manuscript_type);
-      if (topicProbeReviewState?.venueViability) {
-        await runContextMemory.put(
-          "review.venue_viability",
-          topicProbeReviewState.venueViability
-        );
-      }
       await runContextMemory.put("review.minimum_gate", minimumGate);
       await runContextMemory.put("review.paper_quality_evaluation", llmEvalResult.evaluation);
       await runContextMemory.put("review.readiness_risks", readinessRisks);
@@ -1104,9 +1086,6 @@ interface TopicProbeReviewState {
   valid: boolean;
   reasons: string[];
   decision?: TopicProbeOutcomeDecision;
-  venueViability?: VenueViabilityReport;
-  venueViabilityPath?: string;
-  venueViabilityRepairReasons: string[];
   handoff?: TopicProbeFollowupHandoff;
   gate: TopicProbeReviewGateArtifact;
   gatePath: string;
@@ -1114,22 +1093,6 @@ interface TopicProbeReviewState {
 }
 
 async function evaluateAndPersistTopicProbeReviewGate(
-  run: Parameters<GraphNodeHandler["execute"]>[0]["run"],
-  report: AnalysisReport,
-  evidenceAdequacyAuthorization: EvidenceAdequacyAuthorization | undefined
-): Promise<TopicProbeReviewState> {
-  return withTopicProbePromotionSourceLock({
-    workspaceRoot: process.cwd(),
-    runId: run.id,
-    operation: () => evaluateAndPersistTopicProbeReviewGateUnlocked(
-      run,
-      report,
-      evidenceAdequacyAuthorization
-    )
-  });
-}
-
-async function evaluateAndPersistTopicProbeReviewGateUnlocked(
   run: Parameters<GraphNodeHandler["execute"]>[0]["run"],
   report: AnalysisReport,
   evidenceAdequacyAuthorization: EvidenceAdequacyAuthorization | undefined
@@ -1148,41 +1111,7 @@ async function evaluateAndPersistTopicProbeReviewGateUnlocked(
       ? [...source.reasons]
       : ["topic_probe_review_source_chain_invalid"];
 
-  const outcomeGateValidation = source.valid
-    ? validateTopicProbeOutcomeGateProjection(
-        await safeRead(
-          path.join(
-            ".autolabos",
-            "runs",
-            run.id,
-            "analysis",
-            "topic_probe_outcome_gate.json"
-          )
-        ),
-        {
-          expectedRunId: run.id,
-          expectedResearchCycle: run.graph.researchCycle,
-          outcome: source.decision
-        }
-      )
-    : { reasons: ["topic_probe_review_outcome_gate_source_invalid"] };
-  if (
-    outcomeGateValidation.reasons.length > 0
-    || outcomeGateValidation.gate?.status !== "decided"
-  ) {
-    reasons.push(
-      ...outcomeGateValidation.reasons,
-      "topic_probe_review_outcome_gate_not_trusted"
-    );
-  }
-  const decision = source.valid
-    && outcomeGateValidation.reasons.length === 0
-    && outcomeGateValidation.gate?.status === "decided"
-      ? source.decision
-      : undefined;
-  let venueViability: VenueViabilityReport | undefined;
-  let venueViabilityPath: string | undefined;
-  let venueViabilityRepairReasons: string[] = [];
+  const decision = source.valid ? source.decision : undefined;
   let handoff: TopicProbeFollowupHandoff | undefined;
   let handoffPath: string | undefined;
   if (
@@ -1205,62 +1134,27 @@ async function evaluateAndPersistTopicProbeReviewGateUnlocked(
     } else {
       try {
         const candidate = matchingCandidates[0];
-        const venueContext = {
-          candidate,
+        const builtHandoff = buildTopicProbeFollowupHandoff({
+          portfolio: source.portfolio,
           contract: source.contract,
-          outcome: decision
-        };
-        const existingVenueRaw = await safeRead(
-          path.join(
-            ".autolabos",
-            "runs",
-            run.id,
-            VENUE_VIABILITY_REPORT_RELATIVE_PATH
-          )
-        );
-        const existingVenueValidation = validateVenueViabilityReport(
-          existingVenueRaw,
-          venueContext
-        );
-        if (!existingVenueValidation.valid) {
-          venueViabilityRepairReasons = existingVenueValidation.reasons;
-        }
-        venueViability = buildVenueViabilityReport(venueContext);
-        venueViabilityPath = await writeRunArtifact(
-          run,
-          VENUE_VIABILITY_REPORT_RELATIVE_PATH,
-          JSON.stringify(venueViability, null, 2) + "\n"
-        );
-        if (
-          decision.next_action === "start_confirmatory_run"
-          && venueViability.confirmatory_candidacy !== "supported"
-        ) {
-          reasons.push(
-            "topic_probe_review_venue_viability_blocks_confirmatory"
-          );
-        } else {
-          const builtHandoff = buildTopicProbeFollowupHandoff({
+          outcome: decision,
+          candidate
+        });
+        const validation = validateTopicProbeFollowupHandoff(
+          JSON.stringify(builtHandoff),
+          {
             portfolio: source.portfolio,
             contract: source.contract,
             outcome: decision,
-            candidate
-          });
-          const validation = validateTopicProbeFollowupHandoff(
-            JSON.stringify(builtHandoff),
-            {
-              portfolio: source.portfolio,
-              contract: source.contract,
-              outcome: decision,
-              candidate,
-              expectedRunId: run.id,
-              expectedResearchCycle: run.graph.researchCycle
-            }
-          );
-          if (!validation.valid) {
-            reasons.push(...validation.reasons);
-          } else {
-            handoff = builtHandoff;
+            candidate,
+            expectedRunId: run.id,
+            expectedResearchCycle: run.graph.researchCycle
           }
+        );
+        if (!validation.valid) {
+          reasons.push(...validation.reasons);
+        } else {
+          handoff = builtHandoff;
         }
       } catch {
         reasons.push("topic_probe_review_handoff_build_failed");
@@ -1312,9 +1206,6 @@ async function evaluateAndPersistTopicProbeReviewGateUnlocked(
     valid: gate.status === "followup_required" && Boolean(handoff),
     reasons: gate.reason_codes,
     decision,
-    venueViability,
-    venueViabilityPath,
-    venueViabilityRepairReasons,
     handoff,
     gate,
     gatePath,

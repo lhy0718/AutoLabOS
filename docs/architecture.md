@@ -1,7 +1,6 @@
 # Architecture (Harness-Focused)
 
-The runtime contracts below must remain stable while quality enforcement
-improves.
+This document captures the runtime contracts that must remain stable while improving quality enforcement.
 
 ## 0) Product surface decision
 
@@ -429,8 +428,6 @@ Workflow-native topic discovery has a distinct run-scoped artifact class:
 - estimator candidate, contract, and report under `design_experiments_panel/`
 - the recomputed execution gate at
   `governance/topic_probe_execution_authorization.json`
-- the deterministic `VenueViabilityReport` projection at
-  `analysis/venue_viability_report.json`
 
 These are workflow artifacts, not executable CLI intents. `TopicPortfolio`
 binds the verified gap map, `TopicProbeDecision` binds the validated portfolio,
@@ -438,95 +435,10 @@ and `ActiveTopicProbeContract` binds one candidate and its candidate-owned
 measurement contract for a bounded probe. Their presence or a passing probe
 decision does not establish final topic selection or paper readiness.
 
-`VenueViabilityReport` is an `A0_deterministic`, active-candidate-scoped
-projection of the validated portfolio, active contract, closest-prior
-absorption result, and bounded-probe outcome. It reports
-`continue|pivot|kill|blocked`, preserves `current_evidence_ceiling=screening_only`,
-and fixes `paper_scale_claims_allowed=false`, `top_tier_ready=false`, and
-`acceptance_likelihood_assessed=false`. At bounded-probe stage, top-tier
-readiness can only be `blocked` or `unresolved`; confirmatory candidacy is
-reported separately and is not an acceptance forecast. The projection has no
-transition authority independent of the existing outcome and follow-up handoff:
-it cannot authorize confirmation, but `unsupported` candidacy vetoes a stale
-confirmatory route. The report hash is carried through successor receipts,
-lineage manifests, child artifacts, and resume-time runtime guards.
-
 The jobs API, Web UI, TUI, `implement_experiments`, direct implementation
 manager entry, and `run_experiments` all consume the same recomputed execution
 authorization. Persisted pre-probe booleans and estimator status are diagnostic
 components and must never be treated independently as execution permission.
-
-Every command launched by `run_experiments`, including preflight, primary,
-retry, and supplemental commands, crosses the shared execution-envelope
-boundary. The portable envelope binds the command template and hash, workspace
-relative working and writable roots, an environment-name allowlist, network
-policy and purpose, timeout, declared seeds, explicit CPU/NVIDIA device policy,
-input hashes, dependency-lock hashes, and expected outputs. Per-attempt envelopes and receipts remain under
-`execution/{envelopes,receipts}/`; the latest primary pair is projected as
-`execution/execution_envelope.json` and `execution/execution_receipt.json`.
-
-An ACI adapter must report which controls it actually enforced. The local ACI
-first probes the Linux `bubblewrap` adapter. For local CPU execution, no GPU
-device is exposed. For NVIDIA execution, the requested GPU count and concrete
-numeric visible-device IDs must agree; only those device nodes plus required
-NVIDIA control nodes are mounted. When the host permits namespace creation and
-the device policy is enforceable, the adapter exposes only the
-declared workspace, overlays the explicit writable roots, clears the host
-environment, applies the network policy, and reports `enforcement=enforced`
-only after an in-sandbox start marker is observed. A failed setup does not
-silently rerun the command outside the sandbox.
-
-For `executionProfile=docker`, the preferred ACI path creates one ephemeral
-container per envelope from `AUTOLABOS_DOCKER_IMAGE`. The create plan fixes the
-non-root user, read-only root filesystem, dropped capabilities,
-`no-new-privileges`, non-privileged mode, declared network policy, read-only
-workspace mount, writable-root overlays, and exact CPU/NVIDIA device request.
-The envelope binds an immutable image ID or digest; a mutable tag cannot receive
-`enforced` status. Workspace dotenv files are masked, and an optional scoped
-secret file from outside the workspace is mounted read-only under
-`/run/secrets` without persisting its host path, value, or content hash. The
-hash is retained only in the in-memory request, and Docker receives a private
-0400 snapshot so pathname replacement cannot change the mounted credential.
-Dotenv discovery traverses the complete workspace and rejects dotenv symlinks.
-The adapter inspects the stopped container before execution, starts and
-attaches to the envelope command through `/usr/bin/env -i`, inspects the
-stopped container again, compares boundary fingerprints, and removes the
-container. It reports `adapter=docker_run` and `enforcement=enforced` only when
-the complete lifecycle and cleanup pass. The receipt records SHA-256 boundary
-fingerprints and the stability, immutable-image, and cleanup verdicts as
-`runtime_evidence`; raw inspection paths are not persisted. A policy,
-execution, inspection, or
-cleanup failure blocks the command instead of falling back to host execution.
-An ambiguous `docker create` failure also triggers a best-effort forced cleanup
-of the envelope's unique container name.
-
-The historical `DOCKER=<container>` configuration remains a compatibility
-path using inspected `docker_exec`. It requires the same common boundary and
-exact device checks against an already-running container, but cannot create
-per-envelope mounts or device assignments. New paper-facing configurations
-should therefore use the image-backed ephemeral path.
-
-`/doctor` performs the matching Docker preflight before a run is treated as
-ready. For image-backed execution it creates an ephemeral CPU probe, validates
-the stopped boundary, executes `true`, revalidates the stopped boundary, and
-requires successful cleanup. For the compatibility target path it inspects
-the configured running container. Selecting Docker dependency mode alone is
-not readiness evidence. Exact CPU/NVIDIA exposure remains bound and rechecked
-by each command envelope. Remote execution remains blocked until a dedicated
-adapter can provide equivalent evidence.
-
-If `bubblewrap` is missing or forbidden by host policy, GPU IDs are absent or
-unsupported, or required device nodes are unavailable, local execution strips
-non-allowlisted environment variables and verifies the command, input hashes,
-and timeout. It does not claim workspace, mount, device, or blocked-network
-isolation and therefore reports `enforcement=partial` with a reason code.
-Remote and plan-only profiles fail closed until they have dedicated adapters.
-An adapter without the envelope API reports
-`enforcement=compatibility`. Neither level is paper-grade. The existing
-`execution_grounding` research-process check requires a hash-valid
-`enforcement=enforced` receipt with every environment, workspace, input,
-timeout, network, mount, and device assurance flag and required output
-present before experimental output can be paper-ready eligible.
 
 `analyze_papers` revalidates the collection generation, query plan, reviewer
 input hash, pair judgments, retained paper IDs, family counts, and semantic
@@ -713,43 +625,12 @@ When applicable, validation should confirm:
 - observable behavioral change, not only modified code paths
 - explicitly stated remaining validation or reproducibility gaps
 
-Successor promotion reservations are immutable. A reservation created before
-the current outcome-gate and venue-viability lineage contract cannot be
-silently upgraded because it does not bind those source artifacts. Resume must
-fail closed with an explicit new-research-cycle requirement; a fresh cycle
-creates a new fully bound reservation instead of weakening the lineage.
-
-Outcome, venue, handoff, and review-gate writers share the same parent-scoped
-source lock used by promotion validation, execution claim, and post-claim
-validation. The lock heartbeat exposes holder freshness, but stale locks are
-never deleted automatically; contention fails closed instead of risking two
-critical-section owners. A post-claim validation failure marks both the promotion
-lease and delegated child as failed, and RunStore reconciliation preserves that
-terminal projection. The state-graph runtime permits any delegated child graph
-mutation only while the lease is active and the controller supplies the exact
-owner/fence credential; it rechecks the fence before node execution and before
-committing the result.
-
-`/doctor` inspects these parent-run lock files without mutating them. A fresh
-lock whose holder is still running is reported as a warning because promotion
-writes remain serialized. A stale heartbeat, exited holder, malformed record,
-or unreadable lock is a readiness failure and must be resolved manually after
-the holder state is confirmed. Lock tokens are never included in diagnostics.
-
 ## 10) Non-goals for this track
 
 - No redesign of product UX without an explicit product-direction decision.
 - No broad refactor of orchestration/runtime without contract justification.
 - No speculative replacement of existing node logic.
 - No weakening of review gating, evidence discipline, or reproducibility expectations for convenience.
-
-## 10.1) Research-process evaluation sidecar
-
-The fixed workflow graph is complemented by a stage-aware `research_process` projection in `run_status.json`. This sidecar does not add, remove, or reorder runtime nodes. It evaluates artifact-backed process integrity independently from benchmark results, manuscript polish, and reviewer scores.
-
-Required checks activate only after their owning stage begins. Missing future-stage artifacts remain `not_applicable`, while missing required artifacts are `unmeasured`; malformed or contradictory artifacts are `invalid` or `fail`. A paper-ready projection requires this process sidecar to pass in addition to evidence adequacy and review assurance.
-
-The meta-harness may use failed process checks to strengthen `generate_hypotheses`, `design_experiments`, `analyze_results`, or `review` prompts. It must not optimize a scalar readiness score directly, treat prompt consensus as evidence, or map runtime-architecture failures to a cosmetic prompt change.
 
 ## 11) Exploration Engine (P2-9)
 

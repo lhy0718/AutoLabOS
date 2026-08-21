@@ -224,65 +224,6 @@ Notes:
   example, `https://research.example.org`) before launch so the explicit probe
   POST can pass the Origin guard without trusting forwarded-protocol headers.
 
-### Isolated Docker Execution
-
-For paper-facing command execution, configure an image that contains the
-experiment dependencies, `/usr/bin/env`, and `/bin/sh`:
-
-```bash
-AUTOLABOS_DOCKER_IMAGE=your-versioned-research-image:tag
-npm run validation:docker-envelope
-
-# Optional exact NVIDIA selection
-npm run validation:docker-envelope -- --gpu-ids 0
-```
-
-AutoLabOS creates a fresh, read-only, capability-dropped container for each
-execution envelope, mounts only the workspace and declared writable roots,
-applies the declared network and device policy, verifies the boundary before
-and after execution, and removes the container. The receipt preserves hashed
-pre/post boundary fingerprints, stability, immutable-image, and cleanup
-evidence without exposing inspected host mount paths. The older
-`DOCKER=<running-container>` configuration remains available for compatibility
-but cannot provide per-envelope mounts or device assignments.
-
-Paper-facing envelopes must bind `AUTOLABOS_DOCKER_IMAGE` to an immutable
-`sha256:...` image ID or `name@sha256:...` digest. Mutable tags run only as
-non-paper-grade diagnostics. Workspace `.env` files are masked in ephemeral
-containers. When an experiment needs a provider credential, point
-`AUTOLABOS_DOCKER_SECRET_FILE` to a credential-only regular file outside the
-workspace; the primary experiment receives it read-only at
-`/run/secrets/autolabos.env`, while the host path and value stay out of the
-envelope artifact. The file must be owned by the current user with no group or
-other permissions, and the experiment command must explicitly reference the
-container target under a declared `remote_inference` network purpose. The
-adapter binds the secret content in memory, mounts a private 0400 snapshot
-instead of the original pathname, and removes that snapshot after container
-cleanup. Dotenv paths are scanned recursively, including dependency and Git
-metadata directories; a dotenv symlink blocks execution.
-
-### Full-Text Literature Evidence
-
-Topic and review artifacts can use a portable primary-source manifest that
-binds canonical URLs, first-page titles, PDF hashes and sizes, inspected
-locations, absorbed claims, unresolved scope, and the residual claim ceiling.
-The generic validator rejects abstract-only verification, missing closest-prior
-roles, title mismatches, duplicate sources, and developer-machine paths:
-
-```bash
-npm run validation:literature-evidence -- \
-  --manifest path/to/full-text-manifest.json
-
-# Require and recompute hashes against a local, uncommitted PDF cache.
-npm run validation:literature-evidence -- \
-  --manifest path/to/full-text-manifest.json \
-  --source-dir path/to/pdf-cache \
-  --require-source-cache
-```
-
-The manifest is evidence provenance, not an automatic novelty verdict. Search
-results, abstracts, and agent agreement cannot close the residual-claim gate.
-
 ### Prerequisites
 
 | Item | When needed | Notes |
@@ -455,8 +396,8 @@ The LLM is instructed through `TASK.md` to return only `TARGET_FILE + unified di
 `autolabos evolve` runs a bounded mutation-and-evaluation loop over `.codex` and `node-prompts`.
 
 - supports `--max-cycles`, `--target skills|prompts|all`, and `--dry-run`
-- reads component scores and artifact-backed process checks from the eval harness and `run_status.research_process`; no readiness score is a scientific gate
-- can propose bounded prompt and skill mutations, rerun validation, and compare process blockers across cycles
+- reads run fitness from `paper_readiness.overall_score`
+- can mutate prompts and skills, run validation, and compare fitness across cycles
 - rolls back regressions by restoring `.codex` and `node-prompts` from the last good git tag
 
 This is a self-improvement path, but not an unconstrained repo-wide rewrite path.

@@ -1,10 +1,4 @@
-import {
-  GraphNodeId,
-  GRAPH_NODE_ORDER,
-  RunRecord,
-  RunResearchProcessProjection,
-  TransitionHistoryEntry
-} from "../../types.js";
+import { GraphNodeId, GRAPH_NODE_ORDER, RunRecord, TransitionHistoryEntry } from "../../types.js";
 
 export type AutonomyFailureCategory = "bug" | "prompt" | "architecture" | "hyperparameter" | "none";
 
@@ -15,10 +9,7 @@ export interface RunAutonomyMetrics {
   run_status: RunRecord["status"];
   fitness_signal: number;
   fitness_signal_source: "eval_harness_overall_score";
-  evidence_gates_preserved: boolean;
-  process_evaluation_status: RunResearchProcessProjection["status"];
-  process_required_check_count: number;
-  process_blocker_count: number;
+  evidence_gates_preserved: true;
   retry_attempts_total: number;
   rollback_count_total: number;
   backward_jump_count: number;
@@ -32,8 +23,6 @@ export interface RunAutonomyMetrics {
 
 export interface AutonomyAggregateMetrics {
   avg_fitness_signal: number;
-  process_evaluation_pass_rate: number;
-  avg_process_blocker_count: number;
   auto_handoff_rate: number;
   policy_blocked_rate: number;
   avg_retry_attempts_total: number;
@@ -50,7 +39,6 @@ export function buildRunAutonomyMetrics(input: {
   artifactCompletenessRatio: number;
   autoHandoffToRunExperiments: boolean;
   policyBlocked: boolean;
-  researchProcess?: RunResearchProcessProjection;
   findings?: string[];
 }): RunAutonomyMetrics {
   const failurePriority = categorizeFailureFindings(input.findings || []);
@@ -61,10 +49,7 @@ export function buildRunAutonomyMetrics(input: {
     run_status: input.run.status,
     fitness_signal: round(input.overallScore),
     fitness_signal_source: "eval_harness_overall_score",
-    evidence_gates_preserved: input.researchProcess?.status === "pass",
-    process_evaluation_status: input.researchProcess?.status || "unmeasured",
-    process_required_check_count: input.researchProcess?.required_check_count || 0,
-    process_blocker_count: input.researchProcess?.blocker_count || 0,
+    evidence_gates_preserved: true,
     retry_attempts_total: sumRecord(input.run.graph.retryCounters),
     rollback_count_total: sumRecord(input.run.graph.rollbackCounters),
     backward_jump_count: countBackwardJumps(input.run.graph.transitionHistory || []),
@@ -80,8 +65,6 @@ export function buildRunAutonomyMetrics(input: {
 export function buildAutonomyAggregateMetrics(runs: RunAutonomyMetrics[]): AutonomyAggregateMetrics {
   return {
     avg_fitness_signal: round(average(runs.map((run) => run.fitness_signal))),
-    process_evaluation_pass_rate: averageRate(runs, (run) => run.process_evaluation_status === "pass"),
-    avg_process_blocker_count: round(average(runs.map((run) => run.process_blocker_count))),
     auto_handoff_rate: averageRate(runs, (run) => run.auto_handoff_to_run_experiments),
     policy_blocked_rate: averageRate(runs, (run) => run.policy_blocked),
     avg_retry_attempts_total: round(average(runs.map((run) => run.retry_attempts_total))),

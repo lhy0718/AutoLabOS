@@ -12,8 +12,6 @@ import {
   buildRunAutonomyMetrics,
   RunAutonomyMetrics
 } from "./autonomyMetrics.js";
-import { buildRunResearchProcessProjection } from "./researchProcessEvaluation.js";
-import { readRunOperatorStatus } from "../runs/runStatus.js";
 
 export interface EvalHarnessOptions {
   cwd: string;
@@ -220,8 +218,8 @@ export function renderEvalHarnessSummary(report: EvalHarnessReport): string {
     `Run verifier pass rate: ${formatPercent(report.aggregate.run_verifier_pass_rate)}`,
     `Objective met rate: ${formatPercent(report.aggregate.objective_met_rate)}`,
     `Policy-blocked run rate: ${formatPercent(report.aggregate.policy_blocked_run_rate)}`,
-    `Average component score: ${report.aggregate.avg_overall_score.toFixed(3)}`,
-    `Research process pass rate: ${formatPercent(report.aggregate.autonomy.process_evaluation_pass_rate)}`
+    `Average overall score: ${report.aggregate.avg_overall_score.toFixed(3)}`,
+    `Autonomy fitness signal: ${report.aggregate.autonomy.avg_fitness_signal.toFixed(3)}`
   ];
   if (report.aggregate.policy_rule_counts.length > 0) {
     lines.push(
@@ -265,9 +263,8 @@ export function renderEvalHarnessMarkdown(report: EvalHarnessReport): string {
     `- Artifact completeness rate: ${formatPercent(report.aggregate.artifact_completeness_rate)}`,
     `- Average implement attempts: ${report.aggregate.avg_implement_attempts.toFixed(2)}`,
     `- Average branch count: ${report.aggregate.avg_branch_count.toFixed(2)}`,
-    `- Average component score: ${report.aggregate.avg_overall_score.toFixed(3)}`,
-    `- Research process pass rate: ${formatPercent(report.aggregate.autonomy.process_evaluation_pass_rate)}`,
-    `- Average research-process blocker count: ${report.aggregate.autonomy.avg_process_blocker_count.toFixed(2)}`,
+    `- Average overall score: ${report.aggregate.avg_overall_score.toFixed(3)}`,
+    `- Autonomy fitness signal: ${report.aggregate.autonomy.avg_fitness_signal.toFixed(3)}`,
     `- Autonomy policy-blocked rate: ${formatPercent(report.aggregate.autonomy.policy_blocked_rate)}`,
     "",
     "## Policy",
@@ -336,12 +333,6 @@ async function evaluateRun(runsDir: string, run: RunRecord): Promise<EvalHarness
     EXPECTED_ARTIFACTS.length
   );
   const policyBlocked = implementFailureType === "policy" || runVerifierStage === "policy";
-  const storedStatus = await readRunOperatorStatus(runDir);
-  const researchProcess = storedStatus?.research_process || await buildRunResearchProcessProjection({
-    workspaceRoot: path.resolve(runsDir, "..", ".."),
-    runDir,
-    run
-  });
 
   const scores = {
     implementation: scoreImplementationStatus(implementStatus),
@@ -378,7 +369,6 @@ async function evaluateRun(runsDir: string, run: RunRecord): Promise<EvalHarness
     artifactCompletenessRatio,
     autoHandoffToRunExperiments: autoHandoff,
     policyBlocked,
-    researchProcess,
     findings
   });
 

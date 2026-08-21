@@ -505,13 +505,6 @@ export async function runResearchPack(input: {
       source: path.join(sourceDir, relative),
       relative,
       redactIdentifiers: true
-    })),
-    ...gate.input_bindings.map((binding) => ({
-      source: resolveWithinCwd(input.cwd, binding.path),
-      relative: path.posix.join("evidence", binding.path.replace(/\\/gu, "/")),
-      redactIdentifiers: false,
-      expectedSha256: binding.sha256,
-      expectedBytes: binding.bytes
     }))
   ]);
 
@@ -519,28 +512,14 @@ export async function runResearchPack(input: {
     let raw = candidate.frozenBytes;
     if (!raw) {
       const stat = await fs.lstat(candidate.source).catch(() => null);
-      if (!stat) {
-        if (candidate.expectedSha256) {
-          throw new Error(`EvidenceBundle bound file is missing before pack: ${candidate.relative}`);
-        }
-        continue;
-      }
+      if (!stat) continue;
       if (!stat.isFile() || stat.isSymbolicLink()) {
         throw new Error(`Research pack sidecar must be a regular, non-symbolic-link file: ${candidate.relative}`);
       }
       raw = await fs.readFile(candidate.source);
     }
-    if (candidate.expectedSha256 || candidate.expectedBytes !== undefined) {
-      const observedSha256 = createHash("sha256").update(raw).digest("hex");
-      if (observedSha256 !== candidate.expectedSha256 || raw.byteLength !== candidate.expectedBytes) {
-        throw new Error(`EvidenceBundle bound file drifted before pack: ${candidate.relative}`);
-      }
-    }
     const text = raw.toString("utf8");
     if (containsNonPortableResearchText(text)) {
-      if (candidate.expectedSha256) {
-        throw new Error(`EvidenceBundle bound file contains non-portable or sensitive text: ${candidate.relative}`);
-      }
       portabilityIssues.push(`Excluded ${candidate.relative} because it contains non-portable or sensitive text.`);
       continue;
     }
@@ -774,8 +753,6 @@ interface PackCandidate {
   relative: string;
   redactIdentifiers: boolean;
   frozenBytes?: Buffer;
-  expectedSha256?: string;
-  expectedBytes?: number;
 }
 
 function uniqueCandidateFiles(candidates: PackCandidate[]): PackCandidate[] {

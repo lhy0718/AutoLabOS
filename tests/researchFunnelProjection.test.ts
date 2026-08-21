@@ -53,10 +53,6 @@ import { buildTopicProbeOutcomeDecision } from "../src/core/topicProbeOutcome.js
 import { buildTopicProbeFollowupHandoff } from "../src/core/topicProbeFollowup.js";
 import { buildTopicProbeReviewGate } from "../src/core/topicProbeReviewGate.js";
 import {
-  buildVenueViabilityReport,
-  VENUE_VIABILITY_REPORT_RELATIVE_PATH
-} from "../src/core/venueViability.js";
-import {
   makeTopicProbeComputeBudgetDeclaration,
   makeTopicProbeComputeBudgetLimits
 } from "./support/topicProbeComputeBudget.js";
@@ -1266,18 +1262,6 @@ describe("loadResearchFunnelProjection", () => {
           path: "analysis/topic_probe_outcome_gate.json"
         }
       },
-      venueViability: {
-        status: "trusted",
-        trusted: true,
-        candidateViability: "continue",
-        currentEvidenceCeiling: "screening_only",
-        topTierReadiness: "unresolved",
-        confirmatoryCandidacy: "supported",
-        declaredComparatorEffectGate: "passed",
-        topTierReady: false,
-        acceptanceLikelihoodAssessed: false,
-        contentHash: postProbe.venueViability.content_sha256
-      },
       followupHandoff: { status: "unmeasured", trusted: false },
       reviewGate: {
         status: "unmeasured",
@@ -1289,54 +1273,9 @@ describe("loadResearchFunnelProjection", () => {
     });
     expect(projection.hashes).toMatchObject({
       topicProbeOutcome: postProbe.outcome.content_sha256,
-      topicProbeOutcomeGate: postProbe.outcomeGate.content_sha256,
-      venueViability: postProbe.venueViability.content_sha256
+      topicProbeOutcomeGate: postProbe.outcomeGate.content_sha256
     });
     expect(projection.lifecycleStage).not.toBe("probe_authorized");
-  });
-
-  it("marks a marker-declared missing venue report as an invalid chain", async () => {
-    const runDir = await createRunDir();
-    const fixture = buildFunnelFixture({ researchCycle: RESEARCH_CYCLE });
-    await writeFunnelFixture(runDir, fixture);
-    const postProbe = await buildPostProbeFixture(
-      runDir,
-      fixture,
-      RESEARCH_CYCLE
-    );
-    await writePostProbeArtifacts(runDir, postProbe, "outcome");
-    const { content_sha256: _gateHash, ...gatePayload } = postProbe.outcomeGate;
-    const markedGatePayload = {
-      ...gatePayload,
-      venue_viability_report_contract_version: 1
-    };
-    await writeRawArtifact(
-      runDir,
-      "analysis/topic_probe_outcome_gate.json",
-      JSON.stringify({
-        ...markedGatePayload,
-        content_sha256: hashCanonical(markedGatePayload)
-      }, null, 2)
-    );
-    await fs.unlink(path.join(
-      runDir,
-      "analysis/venue_viability_report.json"
-    ));
-
-    const projection = await loadTopicDiscoveryProjection(runDir);
-
-    expect(projection).toMatchObject({
-      lifecycleStage: "invalid_chain",
-      venueViability: {
-        status: "invalid",
-        trusted: false,
-        reasonCodes: ["venue_viability_report_missing"]
-      },
-      integrityStatus: "mismatch"
-    });
-    expect(projection.invalidChainBlockers).toContain(
-      "venue_viability_report_missing"
-    );
   });
 
   it("projects a verified follow-up handoff and review gate at the reviewed stage", async () => {
@@ -2261,11 +2200,6 @@ async function buildPostProbeFixture(
     ...outcomeGatePayload,
     content_sha256: hashCanonical(outcomeGatePayload)
   };
-  const venueViability = buildVenueViabilityReport({
-    candidate: activeCandidate,
-    contract,
-    outcome
-  });
   const handoff = buildTopicProbeFollowupHandoff({
     portfolio: fixture.portfolio,
     contract,
@@ -2278,15 +2212,7 @@ async function buildPostProbeFixture(
     outcome,
     handoff
   });
-  return {
-    contract,
-    report,
-    outcome,
-    outcomeGate,
-    venueViability,
-    handoff,
-    reviewGate
-  };
+  return { contract, report, outcome, outcomeGate, handoff, reviewGate };
 }
 
 async function writePostProbeArtifacts(
@@ -2301,10 +2227,6 @@ async function writePostProbeArtifacts(
     ],
     ["result_analysis.json", JSON.stringify(fixture.report, null, 2)],
     ["analysis/topic_probe_outcome.json", JSON.stringify(fixture.outcome, null, 2)],
-    [
-      VENUE_VIABILITY_REPORT_RELATIVE_PATH,
-      JSON.stringify(fixture.venueViability, null, 2)
-    ],
     [
       "analysis/topic_probe_outcome_gate.json",
       JSON.stringify(fixture.outcomeGate, null, 2)

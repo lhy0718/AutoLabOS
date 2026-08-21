@@ -10,7 +10,6 @@ import {
   validateLiveValidationIssueMarkdown,
   validateRunArtifactStructure
 } from "../src/core/validation/harnessValidators.js";
-import { hashCanonical } from "../src/core/researchFunnel.js";
 import {
   buildMinimalLiveFixtureReviewArtifacts,
   writeLiveFixtureWorkspace
@@ -40,110 +39,6 @@ afterEach(() => {
 });
 
 describe("harness validators", () => {
-  it("rejects an unbound venue viability artifact", async () => {
-    const runDir = createTempRunDir("autolabos-harness-venue-unbound-");
-    await mkdir(path.join(runDir, "analysis"), { recursive: true });
-    await writeJson(path.join(runDir, "analysis", "venue_viability_report.json"), {
-      schema_version: 1,
-      artifact_kind: "venue_viability_report"
-    });
-
-    const result = await validateRunArtifactStructure({
-      runId: "run-venue-unbound",
-      runDir,
-      nodeStates: makeNodeStates({})
-    });
-
-    expect(result.checked).toContain("venue_viability_report");
-    expect(result.issues.map((item) => item.code)).toContain(
-      "venue_viability_report_unbound"
-    );
-  });
-
-  it("requires a venue report when a hash-bound outcome gate declares it", async () => {
-    const runDir = createTempRunDir("autolabos-harness-venue-required-");
-    await mkdir(path.join(runDir, "analysis"), { recursive: true });
-    const gatePayload = {
-      schema_version: 1,
-      artifact_kind: "topic_probe_outcome_gate",
-      run_id: "run-venue-required",
-      research_cycle: 0,
-      status: "blocked_invalid_artifact_chain",
-      disposition: null,
-      outcome_content_sha256: null,
-      reason_codes: ["fixture_chain_blocked"],
-      venue_viability_report_contract_version: 1
-    };
-    await writeJson(
-      path.join(runDir, "analysis", "topic_probe_outcome_gate.json"),
-      {
-        ...gatePayload,
-        content_sha256: hashCanonical(gatePayload)
-      }
-    );
-
-    const result = await validateRunArtifactStructure({
-      runId: "run-venue-required",
-      runDir,
-      nodeStates: makeNodeStates({})
-    });
-
-    expect(result.issues.map((item) => item.code)).toContain(
-      "venue_viability_report_missing"
-    );
-  });
-
-  it("does not trust an outcome gate marker whose canonical hash is stale", async () => {
-    const runDir = createTempRunDir("autolabos-harness-venue-stale-marker-");
-    await mkdir(path.join(runDir, "analysis"), { recursive: true });
-    await writeJson(
-      path.join(runDir, "analysis", "topic_probe_outcome_gate.json"),
-      {
-        schema_version: 1,
-        artifact_kind: "topic_probe_outcome_gate",
-        run_id: "run-venue-stale-marker",
-        research_cycle: 0,
-        status: "blocked_invalid_artifact_chain",
-        disposition: null,
-        outcome_content_sha256: null,
-        reason_codes: ["fixture_chain_blocked"],
-        venue_viability_report_contract_version: 1,
-        content_sha256: "0".repeat(64)
-      }
-    );
-
-    const result = await validateRunArtifactStructure({
-      runId: "run-venue-stale-marker",
-      runDir,
-      nodeStates: makeNodeStates({})
-    });
-
-    expect(result.issues.map((item) => item.code)).not.toContain(
-      "venue_viability_report_missing"
-    );
-    expect(result.issues.map((item) => item.code)).toContain(
-      "topic_probe_outcome_gate_untrusted"
-    );
-  });
-
-  it("does not retroactively require venue reports for pre-projection runs", async () => {
-    const runDir = createTempRunDir("autolabos-harness-venue-pre-projection-");
-    await mkdir(path.join(runDir, "analysis"), { recursive: true });
-    await writeJson(path.join(runDir, "analysis", "topic_probe_outcome.json"), {
-      artifact_kind: "topic_probe_outcome_decision"
-    });
-
-    const result = await validateRunArtifactStructure({
-      runId: "run-venue-pre-projection",
-      runDir,
-      nodeStates: makeNodeStates({})
-    });
-
-    expect(result.issues.map((item) => item.code)).not.toContain(
-      "venue_viability_report_missing"
-    );
-  });
-
   it("accepts a live_fixture run status paired with a completeness checklist", async () => {
     const workspace = createTempWorkspace("autolabos-harness-validator-live-fixture-");
     originalValidationWorkspaceRoot = process.env[VALIDATION_WORKSPACE_ROOT_ENV];
@@ -187,11 +82,6 @@ describe("harness validators", () => {
       warning_reasons: [],
       review_gate: {},
       paper_gate: {},
-      research_process: {
-        version: 1,
-        status: "optimistic",
-        checks: "not-an-array"
-      },
       network_dependency: {
         enabled: false,
         policy: "blocked",
@@ -208,7 +98,6 @@ describe("harness validators", () => {
     });
 
     expect(result.issues.map((item) => item.code)).toContain("run_completeness_checklist_missing");
-    expect(result.issues.map((item) => item.code)).toContain("run_status_research_process_invalid");
   });
 
   it("accepts a structurally complete run bundle", async () => {

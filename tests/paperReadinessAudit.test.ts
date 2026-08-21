@@ -78,7 +78,6 @@ describe("paper-readiness audit", () => {
     expect(report).toContain("## Claim Ceiling");
     expect(report).toContain('<a id="claim-ceiling"></a>');
     expect(report).toContain('<a id="next-actions"></a>');
-    expect(report.endsWith("\n\n")).toBe(false);
 
     const cliOutput = formatPaperReadinessAuditCliSummary(summary);
     expect(cliOutput).toContain("Paper-readiness audit: blocked");
@@ -106,34 +105,6 @@ describe("paper-readiness audit", () => {
     expect(doneCondition).toContain("write_paper completion");
     const autonomyMetrics = await readFile(path.join(workspace, "outputs", "audit", "autonomy-metrics.json"), "utf8");
     expect(autonomyMetrics).toContain("evidence_integrity_score");
-  });
-
-  it("keeps an evidence-blocked report terminal without creating a repair target", async () => {
-    const workspace = await mkdtemp(path.join(os.tmpdir(), "autolabos-audit-evidence-blocked-"));
-    tempDirs.push(workspace);
-    const runRoot = await writeMinimalAuditRun(workspace, {
-      resultTable: [{ metric: "primary_score", baseline: 0.8, comparator: 0.2, delta: -0.6 }]
-    });
-    await rm(path.join(runRoot, "paper", "main.tex"));
-    await writeFile(path.join(runRoot, "paper", "draft.md"), "# Evidence-blocked report\n", "utf8");
-    await writeJson(path.join(runRoot, "paper", "paper_readiness.json"), {
-      paper_ready: false,
-      readiness_state: "evidence_blocked",
-      publication_artifact_type: "evidence_blocked_report"
-    });
-
-    const summary = await runPaperReadinessAudit({
-      cwd: workspace,
-      runRoot,
-      outDir: "outputs/evidence-blocked-audit"
-    });
-
-    expect(summary.verdict).toBe("blocked");
-    expect(summary.top_blockers).toContainEqual(expect.objectContaining({ code: "terminal_evidence_blocked" }));
-    expect(summary.claim_ceiling.allowed_level).toBe("evidence_blocked_report_only");
-    expect(summary.next_action_checklist).toContain(
-      "Preserve the evidence-blocked report, keep confirmatory evidence sealed, and do not promote this branch to a manuscript."
-    );
   });
 
   it("audits an existing run artifact root", async () => {

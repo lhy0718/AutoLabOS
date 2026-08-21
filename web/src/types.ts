@@ -208,36 +208,6 @@ export interface RunReviewAssuranceProjection {
   artifact_refs: RunReviewAssuranceArtifactRef[];
 }
 
-export type RunResearchProcessCheckId =
-  | "hypothesis_contract"
-  | "objective_acceptance_separation"
-  | "plan_execution_alignment"
-  | "execution_grounding"
-  | "hypothesis_disposition"
-  | "evidence_adequacy"
-  | "independent_validation"
-  | "claim_evidence_chain"
-  | "checkpoint_resume_assurance";
-
-export interface RunResearchProcessProjection {
-  version: 1;
-  status: "unmeasured" | "partial" | "pass" | "blocked";
-  trusted: boolean;
-  paper_ready_eligible: boolean;
-  required_check_count: number;
-  passed_required_check_count: number;
-  blocker_count: number;
-  reason_codes: string[];
-  checks: Array<{
-    id: RunResearchProcessCheckId;
-    status: "pass" | "fail" | "invalid" | "unmeasured" | "not_applicable";
-    required: boolean;
-    reason_codes: string[];
-    artifact_refs: Array<{ label: string; path: string }>;
-  }>;
-  policy_note: string;
-}
-
 export interface RunStatusFailureSeed {
   key: string;
   summary: string;
@@ -276,7 +246,6 @@ export interface RunOperatorStatusArtifact {
   };
   evidence_adequacy: RunEvidenceAdequacyProjection;
   review_assurance: RunReviewAssuranceProjection;
-  research_process: RunResearchProcessProjection;
   network_dependency: {
     enabled: boolean;
     policy?: "blocked" | "declared" | "required";
@@ -479,20 +448,6 @@ export interface ResearchFunnelProjection {
     content_sha256?: string;
     artifact_ref?: { label: string; path: string };
   };
-  venue_viability: {
-    status: "unmeasured" | "trusted" | "invalid";
-    trusted: boolean;
-    candidate_viability?: "continue" | "pivot" | "kill" | "blocked";
-    current_evidence_ceiling?: "screening_only";
-    top_tier_readiness?: "blocked" | "unresolved";
-    confirmatory_candidacy?: "supported" | "unsupported" | "unresolved";
-    declared_comparator_effect_gate?: "passed" | "failed" | "unresolved" | "invalid";
-    top_tier_ready: false;
-    acceptance_likelihood_assessed: false;
-    reason_codes: string[];
-    required_upgrades: string[];
-    artifact_ref?: { label: string; path: string };
-  };
   followup_handoff: {
     status: "unmeasured" | "ready" | "invalid";
     trusted: boolean;
@@ -551,7 +506,6 @@ export interface ResearchFunnelProjection {
     active_topic_probe_contract?: string;
     topic_probe_outcome?: string;
     topic_probe_outcome_gate?: string;
-    venue_viability?: string;
     topic_probe_followup_handoff?: string;
     topic_probe_review_gate?: string;
   };
@@ -603,7 +557,6 @@ export interface RunJobProjection {
   evidence_readiness?: EvidenceReadinessProjection;
   evidence_adequacy?: RunEvidenceAdequacyProjection;
   review_assurance?: RunReviewAssuranceProjection;
-  research_process?: RunResearchProcessProjection;
 }
 
 export interface RunJobsSnapshot {

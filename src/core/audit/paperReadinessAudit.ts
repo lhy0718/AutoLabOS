@@ -344,9 +344,6 @@ async function buildAuditSummary(input: {
     payloads: input.artifacts.literatureDiscoveryPayloads
   });
   const readinessState = stringValue(input.artifacts.paperReadiness?.readiness_state);
-  const terminalEvidenceBlocked = !paperReady
-    && readinessState === "evidence_blocked"
-    && input.artifacts.paperReadiness?.publication_artifact_type === "evidence_blocked_report";
   const runStatus = getRunStatus(input.artifacts.runRecord);
   const activeRun = isActiveRunStatus(runStatus);
   const failedRun = isFailedRunStatus(runStatus);
@@ -358,16 +355,6 @@ async function buildAuditSummary(input: {
   const writePaperFailureMessage = getWritePaperFailureMessage(input.artifacts.runRecord);
   const blockers: PaperReadinessAuditBlocker[] = [];
   const rulesApplied: string[] = [];
-
-  if (terminalEvidenceBlocked) {
-    rulesApplied.push("evidence-blocked terminal state -> manuscript promotion prohibited");
-    blockers.push({
-      code: "terminal_evidence_blocked",
-      severity: "blocker",
-      message: "The research branch is intentionally closed as an evidence-blocked report; paper and manuscript promotion remain prohibited.",
-      source: "paperReadiness"
-    });
-  }
 
   if ((paperReady || referenceAuthorityGate.status_present || referenceAuthorityGate.claims_present)
       && referenceAuthorityGate.status !== "pass") {
@@ -588,8 +575,7 @@ async function buildAuditSummary(input: {
     blockers,
     resultTable,
     citationSupportIssues,
-    fallbackOnly,
-    terminalEvidenceBlocked
+    fallbackOnly
   });
   if (allowedLevel === "research_memo_without_quantitative_claims"
       && containsQuantitativeResultClaim(input.artifacts.mainTexText)) {
@@ -1744,7 +1730,6 @@ function resolveAllowedClaimLevel(input: {
   resultTable: ResultTableScore;
   citationSupportIssues: PaperReadinessAuditUnsupportedClaim[];
   fallbackOnly: boolean;
-  terminalEvidenceBlocked: boolean;
 }): string {
   if (input.blockers.some((blocker) => blocker.code === "hidden_failed_run")) {
     return "blocked_until_failed_run_is_visible";
@@ -1764,10 +1749,6 @@ function resolveAllowedClaimLevel(input: {
   if (input.citationSupportIssues.length > 0) {
     return "result_claims_allowed_related_work_downgraded";
   }
-  if (input.terminalEvidenceBlocked
-      && input.blockers.every((blocker) => blocker.code === "terminal_evidence_blocked" || blocker.severity === "warning")) {
-    return "evidence_blocked_report_only";
-  }
   return input.blockers.some((blocker) => blocker.severity === "blocker")
     ? "needs_repair_before_manuscript_promotion"
     : "conditional_claims_with_artifact_links";
@@ -1786,9 +1767,7 @@ function resolveVerdict(blockers: PaperReadinessAuditBlocker[]): PaperReadinessA
 function buildNextActions(blockers: PaperReadinessAuditBlocker[]): string[] {
   const actions = new Set<string>();
   for (const blocker of blockers) {
-    if (blocker.code === "terminal_evidence_blocked") {
-      actions.add("Preserve the evidence-blocked report, keep confirmatory evidence sealed, and do not promote this branch to a manuscript.");
-    } else if (blocker.code === "baseline_or_comparator_missing") {
+    if (blocker.code === "baseline_or_comparator_missing") {
       actions.add("Add or rerun the missing baseline/comparator and recompute deltas in result_table.json.");
     } else if (blocker.code === "result_table_missing" || blocker.code === "result_table_incomplete") {
       actions.add("Produce a complete metric/result table before paper-ready promotion.");
@@ -1986,7 +1965,7 @@ function renderAuditMarkdown(summary: PaperReadinessAuditSummary): string {
     ...summary.next_action_checklist.map((action) => `- [ ] ${action}`),
     ""
   );
-  return `${lines.join("\n").trimEnd()}\n`;
+  return `${lines.join("\n")}\n`;
 }
 
 function listOrNone(values: string[]): string[] {
