@@ -191,6 +191,14 @@ describe("GitHub workflow dependency security", () => {
       {
         "dependency-name": "@types/node",
         "update-types": ["version-update:semver-major"]
+      },
+      {
+        "dependency-name": "typescript",
+        "update-types": ["version-update:semver-major"]
+      },
+      {
+        "dependency-name": "jsdom",
+        "update-types": ["version-update:semver-major"]
       }
     ]);
   });
