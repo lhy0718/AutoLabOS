@@ -53,9 +53,10 @@
   "scripts": {
     "web:install": "npm --prefix web ci",
     "prebuild": "npm run web:install",
-    "build": "tsc -p tsconfig.json && npm --prefix web run build",
-    "typecheck": "tsc -p tsconfig.json --noEmit && npm --prefix web run typecheck",
-    "typecheck:ts7-bridge": "tsc -p tsconfig.json --noEmit --stableTypeOrdering && npm --prefix web run typecheck:ts7-bridge",
+    "build": "node ./node_modules/typescript/bin/tsc -p tsconfig.json && npm --prefix web run build",
+    "typecheck": "node ./node_modules/typescript/bin/tsc -p tsconfig.json --noEmit && npm --prefix web run typecheck",
+    "typecheck:ts7-bridge": "node ./node_modules/typescript/bin/tsc -p tsconfig.json --noEmit --stableTypeOrdering && npm --prefix web run typecheck:ts7-bridge",
+    "typecheck:ts7-native": "node ./node_modules/@typescript/native/bin/tsc -p tsconfig.json --noEmit && npm --prefix web run typecheck:ts7-native",
     "dev": "tsx src/cli/main.ts",
     "predev:web": "npm run web:install",
     "dev:web": "npm --prefix web run build && tsx src/cli/main.ts web",
@@ -113,6 +114,7 @@
   "devDependencies": {
     "@types/better-sqlite3": "^9.6.0",
     "@types/node": "^22.20.1",
+    "@typescript/native": "npm:typescript@^7.0.2",
     "tsx": "^4.23.12",
     "typescript": "^6.0.3",
     "vite": "^8.2.2",

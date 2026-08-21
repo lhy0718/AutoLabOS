@@ -44,9 +44,9 @@
   </p>
 
   <p>
-    <img alt="TypeScript" src="https://img.shields.io/badge/TypeScript-5.x-3178C6?style=flat-square&logo=typescript&logoColor=white" />
-    <img alt="Node" src="https://img.shields.io/badge/Node-%E2%89%A518.17-339933?style=flat-square&logo=node.js&logoColor=white" />
-    <img alt="React" src="https://img.shields.io/badge/React-18-61DAFB?style=flat-square&logo=react&logoColor=black" />
+    <img alt="TypeScript" src="https://img.shields.io/badge/TypeScript-6.x-3178C6?style=flat-square&logo=typescript&logoColor=white" />
+    <img alt="Node" src="https://img.shields.io/badge/Node-22.x%20%7C%2024.x%20%7C%2026.x-339933?style=flat-square&logo=node.js&logoColor=white" />
+    <img alt="React" src="https://img.shields.io/badge/React-19-61DAFB?style=flat-square&logo=react&logoColor=black" />
   </p>
 
   <p>
