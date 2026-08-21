@@ -1,0 +1,1989 @@
+#!/usr/bin/env python3
+import contextlib
+import io
+import os
+import pty
+import json
+import re
+import select
+import signal
+import subprocess
+import sys
+import tempfile
+import threading
+import time
+from datetime import datetime, timezone
+from pathlib import Path
+
+
+STOP_PATTERN = (
+    r"(Run paused:|Research stopped:|Research finished:|Human input required:|"
+    r"Node [a-z_]+ failed:|Node [a-z_]+ finished:|Research continued:|"
+    r"Use /approve to continue|No pending approval)"
+)
+STOP_READY_AFTER_STATUS_ERROR_PATTERN = (
+    r"Add steering, or wait for the next (?:run or )?approval\."
+)
+MODEL_USAGE_LIMIT_BOUNDARY_PATTERN = (
+    r"Status:\s+{node}\s+is blocked by a model usage-limit error\."
+)
+LIVE_INTERACTIVE_PROMPT_PATTERN = (
+    r"(?:Add steering, or wait for the next (?:run or )?approval\.|"
+    r"Add steering to redirect the current run\.)"
+)
+READY_PATTERN = (
+    r"(needs_approval|running|pending|Canceled by user|"
+    r"[a-z_]+ failed\s*[·|]|"
+    r"Add steering, or wait for the next (?:run or )?approval\.|"
+    r"Research Brief workflow is ready)"
+)
+DOCTOR_READY_PATTERN = r"(\[(OK|ATTN|WARN|FAIL)\]\s+[A-Za-z0-9-]+:|runs-dir-write:|codex-research-backend-model:|workspace-config:)"
+DOCTOR_HARNESS_PATTERN = r"\[(OK|FAIL)\]\s+harness-validation:"
+STOP_BOUNDARY_STABLE_SECONDS = 2.0
+HANDOFF_GRACE_SECONDS = 5.0
+MAX_TRANSCRIPT_CHARS = 2_000_000
+MAX_SEARCH_CHARS = 200_000
+WORKFLOW_NODE_ORDER = (
+    "collect_papers",
+    "analyze_papers",
+    "generate_hypotheses",
+    "design_experiments",
+    "implement_experiments",
+    "run_experiments",
+    "analyze_results",
+    "figure_audit",
+    "review",
+    "write_paper",
+)
+WORKFLOW_NODES = set(WORKFLOW_NODE_ORDER)
+
+
+class WaitTimeout(Exception):
+    def __init__(self, pattern: str, transcript: str):
+        super().__init__(pattern)
+        self.pattern = pattern
+        self.transcript = transcript
+
+
+def append_bounded(text: str, chunk: str, limit: int) -> str:
+    if limit <= 0:
+        return ""
+    updated = text + chunk
+    if len(updated) <= limit:
+        return updated
+    return updated[-limit:]
+
+
+def wait_for(fd: int, pattern: str, timeout: float, buffer_text: str, *, search_existing: bool = True) -> str:
+    deadline = time.time() + timeout
+    regex = re.compile(pattern, re.MULTILINE)
+    joined = buffer_text[-MAX_TRANSCRIPT_CHARS:]
+    searchable = joined[-MAX_SEARCH_CHARS:] if search_existing else ""
+    if search_existing and regex.search(searchable):
+        return joined
+    while time.time() < deadline:
+        ready, _, _ = select.select([fd], [], [], max(0.1, deadline - time.time()))
+        if not ready:
+            continue
+        try:
+            data = os.read(fd, 8192)
+        except OSError:
+            break
+        if not data:
+            break
+        chunk = data.decode("utf-8", errors="ignore")
+        joined = append_bounded(joined, chunk, MAX_TRANSCRIPT_CHARS)
+        searchable = append_bounded(searchable, chunk, MAX_SEARCH_CHARS)
+        if regex.search(searchable):
+            return joined
+    print(f"FAIL: pattern not found before timeout: {pattern}")
+    if joined:
+        print("---- recent buffer ----")
+        print(joined[-6000:])
+        print("-----------------------")
+    raise WaitTimeout(pattern, joined)
+
+
+def send_line(fd: int, text: str) -> None:
+    os.write(fd, text.encode("utf-8") + b"\n")
+
+
+def terminate_process_group(proc: subprocess.Popen) -> None:
+    try:
+        os.killpg(proc.pid, signal.SIGTERM)
+    except Exception:
+        pass
+    try:
+        proc.wait(timeout=5)
+    except Exception:
+        try:
+            proc.kill()
+        except Exception:
+            pass
+        try:
+            proc.wait(timeout=2)
+        except Exception:
+            pass
+
+
+def stop_pattern_for_node(node: str) -> str:
+    escaped = re.escape(node)
+    return (
+        r"(Run paused:|Research stopped:|Research finished:|Human input required:|"
+        rf"Node {escaped} failed:|Node {escaped} finished:|Research continued:|"
+        r"Use /approve to continue|No pending approval)"
+    )
+
+
+def node_status_error_pattern(node: str) -> str:
+    return rf"x Status:\s+{re.escape(node)} error:"
+
+
+def has_node_status_error_stop_text(text: str, node: str) -> bool:
+    status_match = re.search(node_status_error_pattern(node), text, re.MULTILINE)
+    if not status_match:
+        return False
+    return bool(re.search(
+        STOP_READY_AFTER_STATUS_ERROR_PATTERN,
+        text[status_match.end():],
+        re.MULTILINE
+    ))
+
+
+def has_model_usage_limit_stop_text(text: str, node: str) -> bool:
+    pattern = MODEL_USAGE_LIMIT_BOUNDARY_PATTERN.format(node=re.escape(node))
+    return bool(re.search(pattern, text, re.MULTILINE | re.IGNORECASE))
+
+
+def load_run_record(workspace: Path, run_id: str) -> dict:
+    record_path = workspace / ".autolabos" / "runs" / run_id / "run_record.json"
+    try:
+        return json.loads(record_path.read_text(encoding="utf-8"))
+    except Exception as exc:
+        print(f"FAIL: could not read run record: {record_path}: {exc}")
+        raise SystemExit(1)
+
+
+def try_load_run_record(workspace: Path, run_id: str) -> dict | None:
+    record_path = workspace / ".autolabos" / "runs" / run_id / "run_record.json"
+    try:
+        return json.loads(record_path.read_text(encoding="utf-8"))
+    except Exception:
+        return None
+
+
+def write_json_atomic(path: Path, payload: dict) -> None:
+    tmp_path = path.with_name(f".{path.name}.tmp-{os.getpid()}")
+    tmp_path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    os.replace(tmp_path, path)
+
+
+def iso_now() -> str:
+    return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+
+
+def helper_timeout_message(node: str, timeout: float, max_wall_seconds: float | None = None) -> str:
+    effective_timeout = max_wall_seconds if max_wall_seconds is not None else timeout
+    if max_wall_seconds is not None and int(max_wall_seconds) != int(timeout):
+        return (
+            f"Validation helper timed out waiting for {node} stop boundary after {int(effective_timeout)} seconds "
+            f"(base idle timeout {int(timeout)} seconds)."
+        )
+    return f"Validation helper timed out waiting for {node} stop boundary after {int(effective_timeout)} seconds."
+
+
+def relative_existing_files(root: Path, directory_name: str) -> list[str]:
+    directory = root / directory_name
+    if not directory.exists():
+        return []
+    paths: list[str] = []
+    for item in sorted(directory.rglob("*")):
+        if not item.is_file():
+            continue
+        relative_parts = item.relative_to(directory).parts
+        if "__pycache__" in relative_parts or item.suffix == ".pyc" or item.name.endswith("__candidate.py"):
+            continue
+        paths.append(str(item.relative_to(root)))
+    return paths
+
+
+def split_completed_and_incomplete_artifacts(paths: list[str]) -> tuple[list[str], list[str]]:
+    completed: list[str] = []
+    incomplete: list[str] = []
+    for item in paths:
+        name = Path(item).name
+        if name.endswith("_error.txt") or name.endswith("_partial_on_error.txt") or "_error" in name:
+            incomplete.append(item)
+        else:
+            completed.append(item)
+    return completed, incomplete
+
+
+def strip_staged_artifact_error_suffix(name: str) -> str:
+    for suffix in ("_partial_on_error.txt", "_local_utility_error.txt", "_error.txt", ".txt"):
+        if name.endswith(suffix):
+            return name[: -len(suffix)]
+    return name
+
+
+def infer_staged_artifact_section_id(relative_path: str) -> str | None:
+    stem = strip_staged_artifact_error_suffix(Path(relative_path).name)
+    if "__" in stem:
+        stem = stem.split("__", 1)[1]
+    if "__d" in stem:
+        stem = stem.split("__d", 1)[0]
+    return stem or None
+
+
+def prompt_for_incomplete_staged_artifact(relative_path: str, chunk_prompt_paths: list[str]) -> str | None:
+    prompt_candidate = f"unit_chunk_prompts/{strip_staged_artifact_error_suffix(Path(relative_path).name)}.txt"
+    return prompt_candidate if prompt_candidate in set(chunk_prompt_paths) else None
+
+
+def completed_staged_section_ids(completed_sections: list[str]) -> set[str]:
+    ids: set[str] = set()
+    for item in completed_sections:
+        section_id = infer_staged_artifact_section_id(item)
+        if section_id:
+            ids.add(section_id)
+    return ids
+
+
+def staged_section_is_resolved(section_id: str | None, completed_section_ids: set[str]) -> bool:
+    if not section_id:
+        return False
+    if section_id in completed_section_ids:
+        return True
+    return any(section_id.startswith(f"{completed_id}_part_") for completed_id in completed_section_ids)
+
+
+def unresolved_staged_artifacts(incomplete_artifacts: list[str], completed_section_ids: set[str]) -> list[str]:
+    return [
+        item
+        for item in incomplete_artifacts
+        if not staged_section_is_resolved(infer_staged_artifact_section_id(item), completed_section_ids)
+    ]
+
+
+def pending_staged_prompts(chunk_prompt_paths: list[str], completed_section_ids: set[str]) -> list[str]:
+    return [
+        item
+        for item in chunk_prompt_paths
+        if not staged_section_is_resolved(infer_staged_artifact_section_id(item), completed_section_ids)
+    ]
+
+
+def build_staged_llm_resume_boundary(
+    incomplete_artifacts: list[str],
+    chunk_prompt_paths: list[str],
+    completed_section_ids: set[str],
+) -> dict:
+    unresolved_artifacts = unresolved_staged_artifacts(incomplete_artifacts, completed_section_ids)
+    boundary = {"incomplete_or_failed_artifact_count": len(unresolved_artifacts)}
+    if unresolved_artifacts:
+        next_artifact = unresolved_artifacts[0]
+        boundary["next_unfinished_artifact"] = next_artifact
+        section_id = infer_staged_artifact_section_id(next_artifact)
+        if section_id:
+            boundary["next_unfinished_section_id"] = section_id
+        prompt_path = prompt_for_incomplete_staged_artifact(next_artifact, chunk_prompt_paths)
+        if prompt_path:
+            boundary["next_unfinished_prompt"] = prompt_path
+        return boundary
+    pending_prompts = pending_staged_prompts(chunk_prompt_paths, completed_section_ids)
+    if pending_prompts:
+        next_prompt = pending_prompts[0]
+        section_id = infer_staged_artifact_section_id(next_prompt)
+        if section_id:
+            boundary["next_unfinished_section_id"] = section_id
+        boundary["next_unfinished_prompt"] = next_prompt
+    return boundary
+
+
+def latest_progress_index(node_dir: Path) -> int | None:
+    progress_path = node_dir / "progress.jsonl"
+    if not progress_path.exists():
+        return None
+    latest: int | None = None
+    try:
+        for line in progress_path.read_text(encoding="utf-8").splitlines():
+            try:
+                payload = json.loads(line)
+            except Exception:
+                continue
+            index = payload.get("index")
+            if isinstance(index, int):
+                latest = index if latest is None else max(latest, index)
+    except Exception:
+        return latest
+    return latest
+
+
+def implement_task_plan_hash(run_dir: Path) -> str | None:
+    task_spec_path = run_dir / "implement_task_spec.json"
+    try:
+        task_spec = json.loads(task_spec_path.read_text(encoding="utf-8"))
+    except Exception:
+        return None
+    context = task_spec.get("context")
+    if not isinstance(context, dict):
+        return None
+    plan_hash = context.get("plan_hash")
+    return plan_hash.strip() if isinstance(plan_hash, str) and plan_hash.strip() else None
+
+
+def build_staged_llm_resume_manifest(run_dir: Path, node: str, message: str, now: str) -> dict | None:
+    if node != "implement_experiments":
+        return None
+    node_dir = run_dir / node
+    if not node_dir.exists():
+        return None
+    chunk_response_paths = relative_existing_files(node_dir, "unit_chunk_responses")
+    section_paths = relative_existing_files(node_dir, "unit_sections")
+    chunk_prompt_paths = relative_existing_files(node_dir, "unit_chunk_prompts")
+    completed_chunk_responses, incomplete_chunk_artifacts = split_completed_and_incomplete_artifacts(chunk_response_paths)
+    completed_sections, incomplete_section_artifacts = split_completed_and_incomplete_artifacts(section_paths)
+    incomplete_artifacts = incomplete_chunk_artifacts + incomplete_section_artifacts
+    completed_section_ids = completed_staged_section_ids(completed_sections)
+    unresolved_incomplete_artifacts = unresolved_staged_artifacts(incomplete_artifacts, completed_section_ids)
+    if not (completed_chunk_responses or completed_sections or unresolved_incomplete_artifacts or pending_staged_prompts(chunk_prompt_paths, completed_section_ids)):
+        return None
+    manifest = {
+        "status": "resumable",
+        "reason": "validation_helper_timeout",
+        "node": node,
+        "message": message,
+        "updatedAt": now,
+        "latest_progress_index": latest_progress_index(node_dir),
+        "completed_chunk_responses": completed_chunk_responses,
+        "completed_sections": completed_sections,
+        "chunk_prompts": chunk_prompt_paths,
+        "incomplete_or_failed_artifacts": unresolved_incomplete_artifacts,
+        "recommended_resume_action": "retry implement_experiments with staged materialization resume support; do not discard completed chunks if the regenerated plan matches this manifest",
+    }
+    plan_hash = implement_task_plan_hash(run_dir)
+    if plan_hash:
+        manifest["plan_hash"] = plan_hash
+    manifest.update(build_staged_llm_resume_boundary(incomplete_artifacts, chunk_prompt_paths, completed_section_ids))
+    return manifest
+
+
+def persist_staged_llm_resume_manifest(run_dir: Path, node: str, message: str, now: str) -> Path | None:
+    manifest = build_staged_llm_resume_manifest(run_dir, node, message, now)
+    if not manifest:
+        return None
+    manifest_path = run_dir / node / "staged_llm_resume_manifest.json"
+    manifest_path.parent.mkdir(parents=True, exist_ok=True)
+    write_json_atomic(manifest_path, manifest)
+    return manifest_path
+
+
+def can_persist_helper_timeout_boundary(record: dict, node: str) -> bool:
+    if current_node(record) != node:
+        return False
+    state = node_state(record, node)
+    record_status = str(record.get("status") or "")
+    node_status = str(state.get("status") or "")
+    if record_status == "running" and node_status == "running":
+        return True
+    # Observe-only helpers can time out and terminate their TUI attach process
+    # just as the runtime rewrites the target node back to a paused/pending
+    # projection. That is still the helper timeout boundary we need to make
+    # durable, provided the target remains the current node.
+    return record_status == "paused" and node_status in {"pending", "running"}
+
+
+def persist_helper_timeout_boundary(workspace: Path, run_id: str, node: str, message: str) -> bool:
+    run_dir = workspace / ".autolabos" / "runs" / run_id
+    record_path = run_dir / "run_record.json"
+    try:
+        record = json.loads(record_path.read_text(encoding="utf-8"))
+    except Exception:
+        return False
+    if not can_persist_helper_timeout_boundary(record, node):
+        return False
+    state = node_state(record, node)
+    now = iso_now()
+    record["status"] = "paused"
+    record["updatedAt"] = now
+    record["latestSummary"] = message
+    graph = record.setdefault("graph", {})
+    node_states = graph.setdefault("nodeStates", {})
+    node_states[node] = {
+        **state,
+        "status": "failed",
+        "updatedAt": now,
+        "lastError": message,
+        "note": message,
+    }
+    write_json_atomic(record_path, record)
+    status_path = run_dir / node / "status.json"
+    if status_path.exists():
+        try:
+            status_record = json.loads(status_path.read_text(encoding="utf-8"))
+        except Exception:
+            status_record = {}
+        status_record.update({
+            "status": "failed",
+            "stage": "validation_helper_timeout",
+            "message": message,
+            "lastError": message,
+            "updatedAt": now,
+        })
+        write_json_atomic(status_path, status_record)
+    resume_manifest_path = persist_staged_llm_resume_manifest(run_dir, node, message, now)
+    diagnostic_path = run_dir / node / "validation_helper_timeout.json"
+    diagnostic_path.parent.mkdir(parents=True, exist_ok=True)
+    diagnostic_payload = {
+        "status": "failed",
+        "reason": "validation_helper_timeout",
+        "node": node,
+        "message": message,
+        "updatedAt": now,
+    }
+    if resume_manifest_path is not None:
+        diagnostic_payload["resume_manifest"] = str(resume_manifest_path.relative_to(run_dir))
+        try:
+            resume_manifest = json.loads(resume_manifest_path.read_text(encoding="utf-8"))
+        except Exception:
+            resume_manifest = {}
+        for key in (
+            "next_unfinished_artifact",
+            "next_unfinished_section_id",
+            "next_unfinished_prompt",
+            "incomplete_or_failed_artifact_count",
+        ):
+            if resume_manifest.get(key) is not None:
+                diagnostic_payload[key] = resume_manifest.get(key)
+    write_json_atomic(diagnostic_path, diagnostic_payload)
+    return True
+
+
+def model_usage_limit_message(node: str) -> str:
+    return (
+        f"Validation helper observed a model usage-limit boundary for {node}; "
+        "switch models or wait for quota reset before retrying."
+    )
+
+
+def persist_model_usage_limit_boundary(workspace: Path, run_id: str, node: str) -> bool:
+    run_dir = workspace / ".autolabos" / "runs" / run_id
+    record_path = run_dir / "run_record.json"
+    try:
+        record = json.loads(record_path.read_text(encoding="utf-8"))
+    except Exception:
+        return False
+    if current_node(record) != node:
+        return False
+    state = node_state(record, node)
+    if record.get("status") != "running" or state.get("status") != "running":
+        return False
+    now = iso_now()
+    message = model_usage_limit_message(node)
+    record["status"] = "paused"
+    record["updatedAt"] = now
+    record["latestSummary"] = message
+    graph = record.setdefault("graph", {})
+    node_states = graph.setdefault("nodeStates", {})
+    node_states[node] = {
+        **state,
+        "status": "failed",
+        "updatedAt": now,
+        "lastError": message,
+        "note": message,
+    }
+    write_json_atomic(record_path, record)
+    status_path = run_dir / node / "status.json"
+    if status_path.exists():
+        try:
+            status_record = json.loads(status_path.read_text(encoding="utf-8"))
+        except Exception:
+            status_record = {}
+        status_record.update({
+            "status": "failed",
+            "stage": "validation_model_usage_limit",
+            "message": message,
+            "lastError": message,
+            "updatedAt": now,
+        })
+        write_json_atomic(status_path, status_record)
+    diagnostic_path = run_dir / node / "validation_model_usage_limit.json"
+    diagnostic_path.parent.mkdir(parents=True, exist_ok=True)
+    write_json_atomic(diagnostic_path, {
+        "status": "failed",
+        "reason": "validation_model_usage_limit",
+        "node": node,
+        "message": message,
+        "updatedAt": now,
+    })
+    return True
+
+
+def node_status(record: dict, node: str) -> str:
+    return str(record.get("graph", {}).get("nodeStates", {}).get(node, {}).get("status", ""))
+
+
+def node_state(record: dict, node: str) -> dict:
+    state = record.get("graph", {}).get("nodeStates", {}).get(node, {})
+    return state if isinstance(state, dict) else {}
+
+
+def node_has_persisted_failure(record: dict, node: str) -> bool:
+    state = node_state(record, node)
+    return bool(str(state.get("lastError") or "").strip())
+
+
+def current_node(record: dict) -> str:
+    return str(record.get("currentNode") or record.get("graph", {}).get("currentNode") or "")
+
+
+def is_active_running(record: dict) -> bool:
+    current = current_node(record)
+    return (
+        bool(current)
+        and record.get("status") == "running"
+        and node_status(record, current) == "running"
+        and not node_has_persisted_failure(record, current)
+    )
+
+
+def is_target_node_running(record: dict | None, node: str) -> bool:
+    if not record:
+        return False
+    return (
+        record.get("status") == "running"
+        and current_node(record) == node
+        and node_status(record, node) == "running"
+        and not node_has_persisted_failure(record, node)
+    )
+
+
+def active_running_node(record: dict | None) -> str:
+    if not record or not is_active_running(record):
+        return ""
+    return current_node(record)
+
+
+def running_node_after_fresh_handoff(record: dict | None) -> str:
+    if not record or record.get("status") != "running":
+        return ""
+    current = current_node(record)
+    if current and node_status(record, current) == "running":
+        return current
+    return ""
+
+
+def running_handoff_node(record: dict | None) -> str:
+    active_node = active_running_node(record)
+    if active_node:
+        return active_node
+    return running_node_after_fresh_handoff(record)
+
+
+def wait_for_running_handoff(
+    workspace: Path,
+    run_id: str,
+    previous_node: str,
+    grace_seconds: float = HANDOFF_GRACE_SECONDS
+) -> str:
+    deadline = time.time() + max(0.0, grace_seconds)
+    while time.time() < deadline:
+        active_node = running_handoff_node(try_load_run_record(workspace, run_id))
+        if active_node and active_node != previous_node:
+            return active_node
+        time.sleep(0.25)
+    return ""
+
+
+def should_observe_active_running(record: dict, *, force_run_active: bool) -> bool:
+    if force_run_active:
+        return False
+    return is_active_running(record)
+
+
+def parse_iso_timestamp(value: object) -> float | None:
+    text = str(value or "").strip()
+    if not text:
+        return None
+    try:
+        return datetime.fromisoformat(text.replace("Z", "+00:00")).timestamp()
+    except Exception:
+        return None
+
+
+def running_record_updated_at(record: dict, node: str) -> float | None:
+    candidates = [
+        parse_iso_timestamp(record.get("updatedAt")),
+        parse_iso_timestamp(node_state(record, node).get("updatedAt")),
+    ]
+    candidates = [value for value in candidates if value is not None]
+    return max(candidates) if candidates else None
+
+
+def command_line_contains_live_run(cmdline: str, workspace: Path, run_id: str) -> bool:
+    normalized = cmdline.replace("\x00", " ")
+    if not normalized.strip():
+        return False
+    run_match = bool(run_id and run_id in normalized)
+    workspace_match = str(workspace) in normalized
+    autolabos_match = any(
+        token in normalized
+        for token in (
+            "AutoLabOS/dist/cli/main.js",
+            "dist/cli/main.js",
+            "live-validation-approve-and-run-next.py",
+            "run_command.sh",
+            ".autolabos/runs",
+        )
+    )
+    return bool(run_match or (workspace_match and autolabos_match))
+
+
+def has_live_process_for_run(workspace: Path, run_id: str) -> bool:
+    proc_root = Path("/proc")
+    if not proc_root.exists():
+        return False
+    current_pid = os.getpid()
+    for entry in proc_root.iterdir():
+        if not entry.name.isdigit():
+            continue
+        try:
+            if int(entry.name) == current_pid:
+                continue
+        except ValueError:
+            continue
+        try:
+            cmdline = (entry / "cmdline").read_text(encoding="utf-8", errors="ignore")
+        except Exception:
+            continue
+        if command_line_contains_live_run(cmdline, workspace, run_id):
+            return True
+    return False
+
+
+def reconcile_stale_running_before_attach(
+    workspace: Path,
+    run_id: str,
+    *,
+    max_age_seconds: float
+) -> bool:
+    if max_age_seconds <= 0:
+        return False
+    record = try_load_run_record(workspace, run_id)
+    if not record or not is_active_running(record):
+        return False
+    node = current_node(record)
+    updated_at = running_record_updated_at(record, node)
+    if updated_at is None:
+        return False
+    age_seconds = time.time() - updated_at
+    if age_seconds < max_age_seconds:
+        return False
+    if has_live_process_for_run(workspace, run_id):
+        return False
+    message = (
+        f"Validation helper found stale running state for {node}: no live AutoLabOS process matched "
+        f"run {run_id} after {int(age_seconds)} seconds; marking a helper-timeout boundary before attach."
+    )
+    return persist_helper_timeout_boundary(workspace, run_id, node, message)
+
+
+def has_record_stop_boundary(record: dict, node: str) -> bool:
+    status = node_status(record, node)
+    if status in {"needs_approval", "completed", "failed"}:
+        return True
+    current = current_node(record)
+    if current != node or record.get("status") not in {"paused", "completed", "failed"}:
+        return False
+    # A manual /agent run can first persist a force-jump state such as
+    # currentNode=<target>, run.status=paused, node.status=pending, then start
+    # the node moments later. The caller requires a stable boundary grace
+    # interval before quitting, so a pending paused target can be accepted when
+    # it remains stable instead of keeping the helper open indefinitely after a
+    # completed backtrack.
+    return status != "running"
+
+
+def record_boundary_signature(record: dict, node: str) -> tuple[str, str, str, str]:
+    node_state = record.get("graph", {}).get("nodeStates", {}).get(node, {})
+    updated_at = ""
+    if isinstance(node_state, dict):
+        updated_at = str(node_state.get("updatedAt") or "")
+    return (str(record.get("status") or ""), current_node(record), node_status(record, node), updated_at)
+
+
+def node_progress_signature(workspace: Path, run_id: str, node: str) -> tuple[str, str, str, str] | None:
+    status_path = workspace / ".autolabos" / "runs" / run_id / node / "status.json"
+    try:
+        status_record = json.loads(status_path.read_text(encoding="utf-8"))
+    except Exception:
+        return None
+    return (
+        str(status_record.get("status") or ""),
+        str(status_record.get("stage") or ""),
+        str(status_record.get("updatedAt") or ""),
+        str(status_record.get("progressCount") or ""),
+    )
+
+
+def extend_deadline_for_progress(
+    *,
+    now: float,
+    current_deadline: float,
+    base_timeout: float,
+    max_wall_deadline: float,
+) -> float:
+    if max_wall_deadline <= current_deadline:
+        return current_deadline
+    return max(current_deadline, min(max_wall_deadline, now + base_timeout))
+
+
+def has_fresh_record_stop_boundary(
+    record: dict | None,
+    node: str,
+    initial_signature: tuple[str, str, str, str] | None
+) -> bool:
+    if not record or not has_record_stop_boundary(record, node):
+        return False
+    if initial_signature is None:
+        return True
+    return record_boundary_signature(record, node) != initial_signature
+
+
+def fresh_record_stop_boundary_signature(
+    record: dict | None,
+    node: str,
+    initial_signature: tuple[str, str, str, str] | None
+) -> tuple[str, str, str, str] | None:
+    if has_fresh_record_stop_boundary(record, node, initial_signature):
+        return record_boundary_signature(record, node)
+    return None
+
+
+def stable_stop_boundary_ready(
+    signature: tuple[str, str, str, str] | None,
+    candidate_signature: tuple[str, str, str, str] | None,
+    candidate_seen_at: float,
+    now: float,
+    stable_seconds: float
+) -> bool:
+    return bool(
+        signature
+        and candidate_signature == signature
+        and candidate_seen_at > 0
+        and now - candidate_seen_at >= stable_seconds
+    )
+
+
+def should_accept_text_stop_boundary(
+    record: dict | None,
+    node: str,
+    initial_signature: tuple[str, str, str, str] | None
+) -> bool:
+    # Resumed TUI sessions can replay older "Node X failed" lines. If a run
+    # record was available when observation started, a temporary read miss
+    # during a write must not promote terminal text into an accepted boundary;
+    # otherwise the helper may send /quit while the node is still persisting
+    # completion and turn a completed node into "Canceled by user".
+    if record is None:
+        return initial_signature is None
+    return has_fresh_record_stop_boundary(record, node, initial_signature)
+
+
+def should_accept_node_status_error_text(
+    record: dict | None,
+    node: str,
+    initial_signature: tuple[str, str, str, str] | None
+) -> bool:
+    return should_accept_text_stop_boundary(record, node, initial_signature)
+
+
+def validate_next_node(next_node: str) -> None:
+    if not next_node:
+        raise ValueError("AUTOLABOS_VALIDATION_NEXT_NODE must not be empty")
+    if next_node not in WORKFLOW_NODES:
+        raise ValueError(
+            f"AUTOLABOS_VALIDATION_NEXT_NODE is not a workflow node: {next_node}"
+        )
+
+
+def run_node_command(next_node: str, run_id: str, node_args: str) -> str:
+    command = f"/agent run {next_node} {run_id}"
+    if node_args:
+        command = f"{command} {node_args}"
+    return command
+
+
+def canonical_successor(node: str) -> str:
+    try:
+        index = WORKFLOW_NODE_ORDER.index(node)
+    except ValueError:
+        return ""
+    if index + 1 >= len(WORKFLOW_NODE_ORDER):
+        return ""
+    return WORKFLOW_NODE_ORDER[index + 1]
+
+
+def build_continue_command(record: dict, run_id: str, next_node: str, node_args: str) -> str:
+    validate_next_node(next_node)
+    current = current_node(record)
+    current_status = node_status(record, current)
+    target_status = node_status(record, next_node)
+
+    if current == next_node and current_status == "needs_approval":
+        return run_node_command(next_node, run_id, node_args)
+
+    if current != next_node and current_status == "needs_approval":
+        transition_target = pending_transition_target(record)
+        expected_target = transition_target or canonical_successor(current)
+        if expected_target != next_node:
+            if transition_target:
+                target_description = (
+                    "persisted pendingTransition.targetNode "
+                    f"is {transition_target}"
+                )
+            else:
+                target_description = (
+                    f"canonical workflow successor of {current or '<empty>'} "
+                    f"is {expected_target or '<none>'}"
+                )
+            raise ValueError(
+                f"refusing approval because {target_description}, "
+                f"not requested node {next_node}"
+            )
+        return "/approve"
+
+    if current == next_node and node_has_persisted_failure(record, current):
+        return f"/agent retry {next_node} {run_id}"
+
+    if current == next_node and current_status in {"pending", "running", "failed"}:
+        return run_node_command(next_node, run_id, node_args)
+
+    if target_status in {"running", "failed"} and node_has_persisted_failure(record, next_node):
+        return f"/agent retry {next_node} {run_id}"
+
+    if target_status in {"pending", "running", "failed"}:
+        return run_node_command(next_node, run_id, node_args)
+
+    return f"/agent status {run_id}"
+
+
+def expand_command_override(raw_command: str, run_id: str, next_node: str) -> str:
+    return raw_command.replace("{run_id}", run_id).replace("{next_node}", next_node)
+
+def command_override_replaces_continue_command(raw_command: str) -> bool:
+    return raw_command.lstrip().startswith("/")
+
+
+def select_continue_command(
+    record: dict,
+    run_id: str,
+    next_node: str,
+    node_args: str,
+    command_override: str,
+) -> str:
+    validate_next_node(next_node)
+    if command_override and command_override_replaces_continue_command(command_override):
+        return expand_command_override(command_override, run_id, next_node)
+    return build_continue_command(record, run_id, next_node, node_args)
+
+
+def pending_transition_target(record: dict) -> str:
+    transition = record.get("graph", {}).get("pendingTransition")
+    if not isinstance(transition, dict):
+        return ""
+    return str(transition.get("targetNode") or "")
+
+
+def node_to_observe_after_command(record: dict, next_node: str, command: str) -> str:
+    if command == "/approve":
+        target = pending_transition_target(record)
+        if target:
+            return target
+        return next_node
+    return next_node
+
+
+def wait_for_stop_boundary(
+    fd: int,
+    pattern: str,
+    timeout: float,
+    buffer_text: str,
+    *,
+    workspace: Path,
+    run_id: str,
+    node: str,
+    initial_signature: tuple[str, str, str, str] | None = None,
+    stable_seconds: float = STOP_BOUNDARY_STABLE_SECONDS,
+    accept_live_prompt_boundary: bool = False,
+    max_wall_seconds: float | None = None
+) -> str:
+    start_time = time.time()
+    deadline = start_time + timeout
+    max_wall_deadline = start_time + (max_wall_seconds if max_wall_seconds is not None else timeout)
+    regex = re.compile(pattern, re.MULTILINE)
+    joined = buffer_text[-MAX_TRANSCRIPT_CHARS:]
+    searchable = ""
+    searchable_after_target_running = ""
+    candidate_signature: tuple[str, str, str, str] | None = None
+    candidate_seen_at = 0.0
+    observed_target_running = False
+    progress_signature = node_progress_signature(workspace, run_id, node)
+    live_process_checked_at = 0.0
+    while time.time() < deadline:
+        record = try_load_run_record(workspace, run_id)
+        if is_target_node_running(record, node) and not observed_target_running:
+            observed_target_running = True
+            searchable_after_target_running = ""
+        current_progress_signature = node_progress_signature(workspace, run_id, node)
+        if observed_target_running and current_progress_signature and current_progress_signature != progress_signature:
+            now = time.time()
+            progress_signature = current_progress_signature
+            deadline = extend_deadline_for_progress(
+                now=now,
+                current_deadline=deadline,
+                base_timeout=timeout,
+                max_wall_deadline=max_wall_deadline,
+            )
+        now = time.time()
+        if observed_target_running and now - live_process_checked_at >= 15.0:
+            live_process_checked_at = now
+            if has_live_process_for_run(workspace, run_id):
+                deadline = extend_deadline_for_progress(
+                    now=now,
+                    current_deadline=deadline,
+                    base_timeout=timeout,
+                    max_wall_deadline=max_wall_deadline,
+                )
+        signature = fresh_record_stop_boundary_signature(record, node, initial_signature)
+        if signature:
+            if signature != candidate_signature:
+                candidate_signature = signature
+                candidate_seen_at = now
+            elif stable_stop_boundary_ready(
+                signature,
+                candidate_signature,
+                candidate_seen_at,
+                now,
+                stable_seconds
+            ):
+                return joined
+        else:
+            candidate_signature = None
+            candidate_seen_at = 0.0
+        ready, _, _ = select.select([fd], [], [], min(1.0, max(0.1, deadline - time.time())))
+        if not ready:
+            continue
+        try:
+            data = os.read(fd, 8192)
+        except OSError:
+            break
+        if not data:
+            break
+        chunk = data.decode("utf-8", errors="ignore")
+        joined = append_bounded(joined, chunk, MAX_TRANSCRIPT_CHARS)
+        searchable = append_bounded(searchable, chunk, MAX_SEARCH_CHARS)
+        if observed_target_running:
+            searchable_after_target_running = append_bounded(searchable_after_target_running, chunk, MAX_SEARCH_CHARS)
+            if chunk.strip():
+                deadline = extend_deadline_for_progress(
+                    now=time.time(),
+                    current_deadline=deadline,
+                    base_timeout=timeout,
+                    max_wall_deadline=max_wall_deadline,
+                )
+        if observed_target_running and has_node_status_error_stop_text(searchable_after_target_running, node):
+            record = try_load_run_record(workspace, run_id)
+            if should_accept_node_status_error_text(record, node, initial_signature):
+                return joined
+        if observed_target_running and has_model_usage_limit_stop_text(searchable_after_target_running, node):
+            if persist_model_usage_limit_boundary(workspace, run_id, node):
+                print(f"INFO: persisted model usage-limit boundary for {node}.")
+            return joined
+        if (
+            accept_live_prompt_boundary
+            and observed_target_running
+            and re.search(LIVE_INTERACTIVE_PROMPT_PATTERN, searchable_after_target_running, re.MULTILINE)
+        ):
+            return joined
+        if regex.search(searchable):
+            record = try_load_run_record(workspace, run_id)
+            if is_target_node_running(record, node) and not observed_target_running:
+                observed_target_running = True
+                searchable_after_target_running = ""
+            if record is None and should_accept_text_stop_boundary(record, node, initial_signature):
+                return joined
+            signature = fresh_record_stop_boundary_signature(record, node, initial_signature)
+            now = time.time()
+            if signature:
+                if signature != candidate_signature:
+                    candidate_signature = signature
+                    candidate_seen_at = now
+                elif stable_stop_boundary_ready(
+                    signature,
+                    candidate_signature,
+                    candidate_seen_at,
+                    now,
+                    stable_seconds
+                ):
+                    return joined
+    print(f"FAIL: pattern or persisted stop boundary not found before timeout: {pattern}")
+    if joined:
+        print("---- recent buffer ----")
+        print(joined[-6000:])
+        print("-----------------------")
+    raise WaitTimeout(pattern, joined)
+
+
+def run_selftest() -> int:
+    run_id = "run-validation"
+    args = "--top-n 12"
+    analyze_running = {
+        "status": "running",
+        "currentNode": "analyze_papers",
+        "graph": {"nodeStates": {"analyze_papers": {"status": "running"}}},
+    }
+    analyze_running_with_error = {
+        "status": "running",
+        "currentNode": "analyze_papers",
+        "graph": {"nodeStates": {"analyze_papers": {"status": "running", "lastError": "previous failure"}}},
+    }
+    collect_needs_approval = {
+        "currentNode": "collect_papers",
+        "graph": {
+            "pendingTransition": {"targetNode": "analyze_papers"},
+            "nodeStates": {
+                "collect_papers": {"status": "needs_approval"},
+                "analyze_papers": {"status": "pending"},
+            }
+        },
+    }
+    ordinary_collect_needs_approval = {
+        "currentNode": "collect_papers",
+        "graph": {
+            "nodeStates": {
+                "collect_papers": {"status": "needs_approval"},
+                "analyze_papers": {"status": "pending"},
+            }
+        },
+    }
+    analyze_needs_approval = {
+        "currentNode": "analyze_papers",
+        "graph": {"nodeStates": {"analyze_papers": {"status": "needs_approval"}}},
+    }
+
+    expectations = [
+        (
+            build_continue_command(analyze_running, run_id, "analyze_papers", args),
+            "/agent run analyze_papers run-validation --top-n 12",
+        ),
+        (
+            build_continue_command(analyze_running_with_error, run_id, "analyze_papers", args),
+            "/agent retry analyze_papers run-validation",
+        ),
+        (build_continue_command(collect_needs_approval, run_id, "analyze_papers", args), "/approve"),
+        (
+            build_continue_command(
+                ordinary_collect_needs_approval,
+                run_id,
+                "analyze_papers",
+                args,
+            ),
+            "/approve",
+        ),
+        (
+            build_continue_command(analyze_needs_approval, run_id, "analyze_papers", args),
+            "/agent run analyze_papers run-validation --top-n 12",
+        ),
+    ]
+    for actual, expected in expectations:
+        if actual != expected:
+            print(f"FAIL: expected {expected!r}, got {actual!r}")
+            return 1
+    mismatched_transition = {
+        "currentNode": "collect_papers",
+        "graph": {
+            "pendingTransition": {"targetNode": "analyze_papers"},
+            "nodeStates": {"collect_papers": {"status": "needs_approval"}},
+        },
+    }
+    try:
+        build_continue_command(
+            mismatched_transition,
+            run_id,
+            "generate_hypotheses",
+            args,
+        )
+    except ValueError as exc:
+        if "pendingTransition.targetNode" not in str(exc):
+            print(f"FAIL: mismatched transition returned an unclear rejection: {exc}")
+            return 1
+    else:
+        print("FAIL: mismatched transition was not rejected")
+        return 1
+    try:
+        build_continue_command(
+            ordinary_collect_needs_approval,
+            run_id,
+            "generate_hypotheses",
+            args,
+        )
+    except ValueError as exc:
+        if "canonical workflow successor" not in str(exc):
+            print(f"FAIL: mismatched canonical successor returned an unclear rejection: {exc}")
+            return 1
+    else:
+        print("FAIL: mismatched canonical successor was not rejected")
+        return 1
+    for invalid_node in ("", "not_a_workflow_node"):
+        try:
+            build_continue_command(analyze_running, run_id, invalid_node, args)
+        except ValueError:
+            pass
+        else:
+            print(f"FAIL: invalid workflow node was not rejected: {invalid_node!r}")
+            return 1
+    if select_continue_command(
+        mismatched_transition,
+        run_id,
+        "generate_hypotheses",
+        args,
+        "/approve",
+    ) != "/approve":
+        print("FAIL: explicit /approve command override did not preserve override semantics")
+        return 1
+    if not is_active_running(analyze_running):
+        print("FAIL: active-running run was not detected")
+        return 1
+    if active_running_node(analyze_running) != "analyze_papers":
+        print("FAIL: active-running node was not projected")
+        return 1
+    if running_node_after_fresh_handoff(analyze_running) != "analyze_papers":
+        print("FAIL: fresh handoff running node was not projected")
+        return 1
+    if running_node_after_fresh_handoff(analyze_running_with_error) != "analyze_papers":
+        print("FAIL: fresh handoff ignored a running node that still carries prior lastError")
+        return 1
+    if not is_target_node_running(analyze_running, "analyze_papers"):
+        print("FAIL: target-node running state was not detected")
+        return 1
+    if is_active_running(analyze_running_with_error):
+        print("FAIL: running node with a persisted failure was incorrectly treated as active")
+        return 1
+    if is_target_node_running(analyze_running_with_error, "analyze_papers"):
+        print("FAIL: target-node running state ignored a persisted failure marker")
+        return 1
+    if is_target_node_running(analyze_running, "collect_papers"):
+        print("FAIL: unrelated node was incorrectly detected as running")
+        return 1
+    if active_running_node(analyze_needs_approval):
+        print("FAIL: stopped node was incorrectly projected as active-running")
+        return 1
+    if running_handoff_node(analyze_running) != "analyze_papers":
+        print("FAIL: running handoff node was not detected")
+        return 1
+    if running_handoff_node(analyze_needs_approval):
+        print("FAIL: stopped run was incorrectly treated as a running handoff")
+        return 1
+    with tempfile.TemporaryDirectory() as temp_dir:
+        workspace = Path(temp_dir)
+        delayed_run_id = "delayed-handoff"
+        record_dir = workspace / ".autolabos" / "runs" / delayed_run_id
+        record_dir.mkdir(parents=True)
+        (record_dir / "run_record.json").write_text(json.dumps({
+            "status": "paused",
+            "currentNode": "implement_experiments",
+            "graph": {
+                "nodeStates": {
+                    "implement_experiments": {"status": "completed"},
+                    "run_experiments": {"status": "pending"},
+                }
+            },
+        }), encoding="utf-8")
+
+        def write_delayed_handoff() -> None:
+            time.sleep(0.2)
+            (record_dir / "run_record.json").write_text(json.dumps({
+                "status": "running",
+                "currentNode": "run_experiments",
+                "graph": {
+                    "nodeStates": {
+                        "implement_experiments": {"status": "completed"},
+                        "run_experiments": {"status": "running", "updatedAt": "later"},
+                    }
+                },
+            }), encoding="utf-8")
+
+        handoff_writer = threading.Thread(target=write_delayed_handoff)
+        handoff_writer.start()
+        try:
+            if wait_for_running_handoff(workspace, delayed_run_id, "implement_experiments", 2.0) != "run_experiments":
+                print("FAIL: delayed running handoff was not detected during grace wait")
+                return 1
+        finally:
+            handoff_writer.join(timeout=1.0)
+    with tempfile.TemporaryDirectory() as temp_dir:
+        workspace = Path(temp_dir)
+        timeout_run_id = "timeout-boundary"
+        timeout_node = "implement_experiments"
+        record_dir = workspace / ".autolabos" / "runs" / timeout_run_id
+        record_dir.mkdir(parents=True)
+        (record_dir / timeout_node).mkdir(parents=True)
+        (record_dir / "run_record.json").write_text(json.dumps({
+            "status": "running",
+            "currentNode": timeout_node,
+            "graph": {
+                "currentNode": timeout_node,
+                "nodeStates": {
+                    timeout_node: {"status": "running", "updatedAt": "before"},
+                }
+            },
+        }), encoding="utf-8")
+        (record_dir / timeout_node / "status.json").write_text(json.dumps({
+            "status": "running",
+            "stage": "codex",
+            "message": "before",
+        }), encoding="utf-8")
+        if not persist_helper_timeout_boundary(workspace, timeout_run_id, timeout_node, "helper timeout"):
+            print("FAIL: helper timeout boundary was not persisted")
+            return 1
+        timeout_record = json.loads((record_dir / "run_record.json").read_text(encoding="utf-8"))
+        timeout_state = timeout_record["graph"]["nodeStates"][timeout_node]
+        timeout_status = json.loads((record_dir / timeout_node / "status.json").read_text(encoding="utf-8"))
+        if timeout_record.get("status") != "paused" or timeout_state.get("status") != "failed":
+            print("FAIL: helper timeout boundary did not pause and fail the running node")
+            return 1
+        if timeout_status.get("status") != "failed" or timeout_status.get("stage") != "validation_helper_timeout":
+            print("FAIL: helper timeout boundary did not close the node status file")
+            return 1
+        if timeout_state.get("lastError") != "helper timeout":
+            print("FAIL: helper timeout boundary did not preserve the diagnostic")
+            return 1
+        if not (record_dir / timeout_node / "validation_helper_timeout.json").exists():
+            print("FAIL: helper timeout diagnostic artifact was not written")
+            return 1
+    with tempfile.TemporaryDirectory() as temp_dir:
+        workspace = Path(temp_dir)
+        timeout_run_id = "observe-timeout-boundary"
+        timeout_node = "implement_experiments"
+        record_dir = workspace / ".autolabos" / "runs" / timeout_run_id
+        node_dir = record_dir / timeout_node
+        (node_dir / "unit_chunk_responses").mkdir(parents=True)
+        (node_dir / "unit_sections").mkdir(parents=True)
+        (node_dir / "unit_chunk_prompts").mkdir(parents=True)
+        (node_dir / "unit_chunk_responses" / "artifact__chunk_1.txt").write_text("ok", encoding="utf-8")
+        (node_dir / "unit_chunk_responses" / "artifact__chunk_2_error.txt").write_text("timeout", encoding="utf-8")
+        (node_dir / "unit_chunk_prompts" / "artifact__chunk_2.txt").write_text("prompt", encoding="utf-8")
+        (node_dir / "unit_sections" / "artifact__chunk_1.txt").write_text("def ok():\n    return True\n", encoding="utf-8")
+        (record_dir / "run_record.json").write_text(json.dumps({
+            "status": "paused",
+            "currentNode": timeout_node,
+            "graph": {
+                "currentNode": timeout_node,
+                "nodeStates": {
+                    timeout_node: {"status": "pending", "updatedAt": "before"},
+                }
+            },
+        }), encoding="utf-8")
+        (node_dir / "status.json").write_text(json.dumps({
+            "status": "pending",
+            "stage": "codex",
+            "message": "reattached helper timed out",
+        }), encoding="utf-8")
+        if not persist_helper_timeout_boundary(workspace, timeout_run_id, timeout_node, "observe helper timeout"):
+            print("FAIL: observe-only helper timeout boundary was not persisted")
+            return 1
+        observe_record = json.loads((record_dir / "run_record.json").read_text(encoding="utf-8"))
+        observe_state = observe_record["graph"]["nodeStates"][timeout_node]
+        if observe_record.get("status") != "paused" or observe_state.get("status") != "failed":
+            print("FAIL: observe-only helper timeout did not fail the paused target node")
+            return 1
+        observe_manifest_path = node_dir / "staged_llm_resume_manifest.json"
+        if not observe_manifest_path.exists():
+            print("FAIL: observe-only helper timeout did not write a staged_llm resume manifest")
+            return 1
+        observe_diagnostic = json.loads((node_dir / "validation_helper_timeout.json").read_text(encoding="utf-8"))
+        if observe_diagnostic.get("resume_manifest") != "implement_experiments/staged_llm_resume_manifest.json":
+            print("FAIL: observe-only helper timeout diagnostic did not link the resume manifest")
+            return 1
+        if observe_diagnostic.get("next_unfinished_section_id") != "chunk_2":
+            print("FAIL: observe-only helper timeout diagnostic did not expose the next unfinished section")
+            return 1
+    with tempfile.TemporaryDirectory() as temp_dir:
+        workspace = Path(temp_dir)
+        streaming_run_id = "streaming-boundary"
+        streaming_node = "run_experiments"
+        record_dir = workspace / ".autolabos" / "runs" / streaming_run_id
+        node_dir = record_dir / streaming_node
+        node_dir.mkdir(parents=True)
+        (record_dir / "run_record.json").write_text(json.dumps({
+            "status": "running",
+            "currentNode": streaming_node,
+            "graph": {
+                "currentNode": streaming_node,
+                "nodeStates": {
+                    streaming_node: {"status": "running", "updatedAt": "before"},
+                }
+            },
+        }), encoding="utf-8")
+        (node_dir / "status.json").write_text(json.dumps({
+            "status": "running",
+            "stage": "codex",
+            "updatedAt": "before",
+            "progressCount": 1,
+        }), encoding="utf-8")
+        master_fd, slave_fd = os.openpty()
+
+        def write_streaming_chunk() -> None:
+            time.sleep(0.15)
+            os.write(slave_fd, b"still streaming provider output\n")
+            time.sleep(0.35)
+            os.close(slave_fd)
+
+        writer = threading.Thread(target=write_streaming_chunk)
+        writer.start()
+        started = time.time()
+        try:
+            with contextlib.redirect_stdout(io.StringIO()):
+                wait_for_stop_boundary(
+                    master_fd,
+                    r"never-matches",
+                    0.2,
+                    "",
+                    workspace=workspace,
+                    run_id=streaming_run_id,
+                    node=streaming_node,
+                    max_wall_seconds=0.6,
+                )
+            print("FAIL: streaming helper wait unexpectedly found a boundary")
+            return 1
+        except WaitTimeout:
+            elapsed = time.time() - started
+            if elapsed < 0.28:
+                print("FAIL: streaming provider output did not extend the helper idle deadline")
+                return 1
+        finally:
+            writer.join(timeout=1.0)
+            try:
+                os.close(master_fd)
+            except OSError:
+                pass
+        bounded_message = helper_timeout_message(timeout_node, 1800, 7200)
+        if "7200 seconds" not in bounded_message or "base idle timeout 1800 seconds" not in bounded_message:
+            print("FAIL: helper timeout message did not report the effective bounded max-wall cap")
+            return 1
+        unbounded_message = helper_timeout_message(timeout_node, 1800, 1800)
+        if "7200 seconds" in unbounded_message or "base idle timeout" in unbounded_message:
+            print("FAIL: helper timeout message should not mention max-wall when it equals the idle timeout")
+            return 1
+        sleepy_proc = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(30)"], preexec_fn=os.setsid)
+        terminate_process_group(sleepy_proc)
+        if sleepy_proc.poll() is None:
+            print("FAIL: helper timeout process termination left the child running")
+            return 1
+        terminate_process_group(sleepy_proc)
+    with tempfile.TemporaryDirectory() as temp_dir:
+        workspace = Path(temp_dir)
+        usage_run_id = "usage-limit-boundary"
+        usage_node = "implement_experiments"
+        record_dir = workspace / ".autolabos" / "runs" / usage_run_id
+        record_dir.mkdir(parents=True)
+        (record_dir / usage_node).mkdir(parents=True)
+        (record_dir / "run_record.json").write_text(json.dumps({
+            "status": "running",
+            "currentNode": usage_node,
+            "graph": {
+                "currentNode": usage_node,
+                "nodeStates": {
+                    usage_node: {"status": "running", "updatedAt": "before"},
+                }
+            },
+        }), encoding="utf-8")
+        (record_dir / usage_node / "status.json").write_text(json.dumps({
+            "status": "running",
+            "stage": "codex",
+            "message": "before",
+        }), encoding="utf-8")
+        usage_text = (
+            "Status: implement_experiments is blocked by a model usage-limit error.\n"
+            "Detail: model usage limit; switch models or wait for quota reset before retrying."
+        )
+        if not has_model_usage_limit_stop_text(usage_text, usage_node):
+            print("FAIL: model usage-limit status text was not detected")
+            return 1
+        if has_model_usage_limit_stop_text(usage_text, "run_experiments"):
+            print("FAIL: model usage-limit status text matched an unrelated node")
+            return 1
+        if not persist_model_usage_limit_boundary(workspace, usage_run_id, usage_node):
+            print("FAIL: model usage-limit boundary was not persisted")
+            return 1
+        usage_record = json.loads((record_dir / "run_record.json").read_text(encoding="utf-8"))
+        usage_state = usage_record["graph"]["nodeStates"][usage_node]
+        usage_status = json.loads((record_dir / usage_node / "status.json").read_text(encoding="utf-8"))
+        if usage_record.get("status") != "paused" or usage_state.get("status") != "failed":
+            print("FAIL: model usage-limit boundary did not pause and fail the running node")
+            return 1
+        if usage_status.get("status") != "failed" or usage_status.get("stage") != "validation_model_usage_limit":
+            print("FAIL: model usage-limit boundary did not close the node status file")
+            return 1
+        if "usage-limit" not in usage_state.get("lastError", ""):
+            print("FAIL: model usage-limit boundary did not preserve the diagnostic")
+            return 1
+        if not (record_dir / usage_node / "validation_model_usage_limit.json").exists():
+            print("FAIL: model usage-limit diagnostic artifact was not written")
+            return 1
+    if not should_observe_active_running(analyze_running, force_run_active=False):
+        print("FAIL: active-running run was not selected for observation")
+        return 1
+    if should_observe_active_running(analyze_running, force_run_active=True):
+        print("FAIL: force-run-active should bypass observation of a stale running record")
+        return 1
+    with tempfile.TemporaryDirectory() as temp_dir:
+        workspace = Path(temp_dir)
+        stale_run_id = "stale-running-run"
+        stale_node = "run_experiments"
+        stale_run_dir = workspace / ".autolabos" / "runs" / stale_run_id
+        stale_node_dir = stale_run_dir / stale_node
+        stale_node_dir.mkdir(parents=True)
+        stale_timestamp = "1970-01-01T00:00:00Z"
+        (stale_run_dir / "run_record.json").write_text(json.dumps({
+            "status": "running",
+            "currentNode": stale_node,
+            "updatedAt": stale_timestamp,
+            "graph": {
+                "currentNode": stale_node,
+                "nodeStates": {
+                    stale_node: {"status": "running", "updatedAt": stale_timestamp},
+                },
+            },
+        }), encoding="utf-8")
+        (stale_node_dir / "status.json").write_text(json.dumps({
+            "status": "running",
+            "stage": "running",
+            "updatedAt": stale_timestamp,
+        }), encoding="utf-8")
+        if not reconcile_stale_running_before_attach(workspace, stale_run_id, max_age_seconds=1):
+            print("FAIL: stale running state was not reconciled before attach")
+            return 1
+        stale_record = json.loads((stale_run_dir / "run_record.json").read_text(encoding="utf-8"))
+        stale_status = json.loads((stale_node_dir / "status.json").read_text(encoding="utf-8"))
+        if stale_record.get("status") != "paused" or node_status(stale_record, stale_node) != "failed":
+            print("FAIL: stale running reconciliation did not pause and fail the node")
+            return 1
+        if stale_status.get("status") != "failed" or stale_status.get("stage") != "validation_helper_timeout":
+            print("FAIL: stale running reconciliation did not close node-local status")
+            return 1
+        if not (stale_node_dir / "validation_helper_timeout.json").exists():
+            print("FAIL: stale running reconciliation did not write diagnostic artifact")
+            return 1
+    if is_active_running(analyze_needs_approval):
+        print("FAIL: needs_approval run was incorrectly detected as active-running")
+        return 1
+    if not has_record_stop_boundary(analyze_needs_approval, "analyze_papers"):
+        print("FAIL: needs_approval run was not detected as a stop boundary")
+        return 1
+    if has_record_stop_boundary(analyze_running, "analyze_papers"):
+        print("FAIL: running run was incorrectly detected as a stop boundary")
+        return 1
+    jumped_pending = {
+        "status": "paused",
+        "currentNode": "implement_experiments",
+        "graph": {"nodeStates": {"implement_experiments": {"status": "pending", "updatedAt": "later"}}},
+    }
+    if not has_record_stop_boundary(jumped_pending, "implement_experiments"):
+        print("FAIL: paused pending target was not exposed as a stabilizable stop boundary")
+        return 1
+    if record_boundary_signature(analyze_needs_approval, "analyze_papers") == record_boundary_signature(
+        analyze_running,
+        "analyze_papers"
+    ):
+        print("FAIL: distinct run states produced the same stop-boundary signature")
+        return 1
+    initial_running_signature = record_boundary_signature(analyze_running, "analyze_papers")
+    if has_fresh_record_stop_boundary(analyze_running, "analyze_papers", initial_running_signature):
+        print("FAIL: unchanged running record was incorrectly treated as a fresh stop boundary")
+        return 1
+    if fresh_record_stop_boundary_signature(analyze_running, "analyze_papers", initial_running_signature):
+        print("FAIL: unchanged running record produced a fresh stop-boundary signature")
+        return 1
+    if should_accept_text_stop_boundary(analyze_running, "analyze_papers", initial_running_signature):
+        print("FAIL: stale replay text would be accepted while persisted state is still running")
+        return 1
+    if should_accept_node_status_error_text(analyze_running, "analyze_papers", initial_running_signature):
+        print("FAIL: stale node-status error text would be accepted while persisted state is still running")
+        return 1
+    advanced_record = {
+        "status": "paused",
+        "currentNode": "analyze_papers",
+        "graph": {"nodeStates": {"analyze_papers": {"status": "needs_approval", "updatedAt": "later"}}},
+    }
+    if not should_accept_text_stop_boundary(advanced_record, "analyze_papers", initial_running_signature):
+        print("FAIL: fresh persisted stop boundary was not accepted")
+        return 1
+    if not should_accept_node_status_error_text(advanced_record, "analyze_papers", initial_running_signature):
+        print("FAIL: fresh persisted stop boundary did not accept node-status error text")
+        return 1
+    advanced_signature = fresh_record_stop_boundary_signature(
+        advanced_record,
+        "analyze_papers",
+        initial_running_signature
+    )
+    if advanced_signature != record_boundary_signature(advanced_record, "analyze_papers"):
+        print("FAIL: fresh persisted stop boundary did not expose its signature")
+        return 1
+    if stable_stop_boundary_ready(advanced_signature, advanced_signature, 100.0, 101.0, 2.0):
+        print("FAIL: stop boundary stabilized before the required grace interval")
+        return 1
+    if not stable_stop_boundary_ready(advanced_signature, advanced_signature, 100.0, 102.1, 2.0):
+        print("FAIL: stop boundary did not stabilize after the required grace interval")
+        return 1
+    if stable_stop_boundary_ready(None, advanced_signature, 100.0, 102.1, 2.0):
+        print("FAIL: missing signature was treated as a stable boundary")
+        return 1
+    if extend_deadline_for_progress(now=10.0, current_deadline=20.0, base_timeout=30.0, max_wall_deadline=100.0) != 40.0:
+        print("FAIL: progress extension did not extend to the next bounded idle deadline")
+        return 1
+    if extend_deadline_for_progress(now=95.0, current_deadline=96.0, base_timeout=30.0, max_wall_deadline=100.0) != 100.0:
+        print("FAIL: progress extension exceeded the max wall deadline")
+        return 1
+    if extend_deadline_for_progress(now=10.0, current_deadline=20.0, base_timeout=30.0, max_wall_deadline=15.0) != 20.0:
+        print("FAIL: progress extension moved a deadline beyond an already-reached wall cap")
+        return 1
+    existing = "+ [OK] disk-free-space: Disk space looks healthy.\nx [FAIL] harness-validation: 1 issue(s), 1 run(s) checked\n"
+    if not re.search(DOCTOR_READY_PATTERN, existing):
+        print("FAIL: doctor ready pattern did not match current check-row output")
+        return 1
+    if wait_for(-1, DOCTOR_HARNESS_PATTERN, 0.01, existing) != existing:
+        print("FAIL: wait_for did not match an already-buffered doctor harness line")
+        return 1
+    previous_doctor = "+ [OK] readiness: ok\n+ [OK] harness-validation: 0 issue(s), 0 run(s) checked\n"
+    if not re.search(DOCTOR_READY_PATTERN, previous_doctor):
+        print("FAIL: doctor ready pattern did not preserve older readiness output")
+        return 1
+    if wait_for(-1, DOCTOR_HARNESS_PATTERN, 0.01, previous_doctor) != previous_doctor:
+        print("FAIL: doctor harness pattern did not preserve older harness output")
+        return 1
+    if "Node [a-z_]+ finished:" not in STOP_PATTERN:
+        print("FAIL: stop pattern does not include expected node-finished boundary")
+        return 1
+    design_stop = stop_pattern_for_node("design_experiments")
+    if re.search(design_stop, "Node implement_experiments finished: stale replay"):
+        print("FAIL: node-specific stop pattern matched an unrelated node")
+        return 1
+    if not re.search(design_stop, "Node design_experiments finished: expected boundary"):
+        print("FAIL: node-specific stop pattern did not match the target node")
+        return 1
+    if re.search(design_stop, "x Status: design_experiments error: stale projection"):
+        print("FAIL: node-specific stop pattern matched a node-local status projection")
+        return 1
+    design_status_error = node_status_error_pattern("design_experiments")
+    if not re.search(design_status_error, "x Status: design_experiments error: expected boundary"):
+        print("FAIL: node-local status-error pattern did not match the target node")
+        return 1
+    if re.search(design_status_error, "x Status: run_experiments error: unrelated boundary"):
+        print("FAIL: node-local status-error pattern matched an unrelated node")
+        return 1
+    if not has_node_status_error_stop_text(
+        "x Status: design_experiments error: expected boundary\n"
+        "Add steering, or wait for the next approval.",
+        "design_experiments",
+    ):
+        print("FAIL: node-local status-error stop text did not match the stopped prompt")
+        return 1
+    if has_node_status_error_stop_text(
+        "x Status: design_experiments error: stale replay\n"
+        "Add steering to redirect the current run.",
+        "design_experiments",
+    ):
+        print("FAIL: node-local status-error stop text matched an active-run prompt")
+        return 1
+    if not should_accept_text_stop_boundary(None, "design_experiments", None):
+        print("FAIL: missing persisted record did not allow a text stop boundary before observation")
+        return 1
+    if should_accept_text_stop_boundary(None, "design_experiments", ("running", "design_experiments", "running", "before")):
+        print("FAIL: transient run-record read miss accepted a text boundary after observation began")
+        return 1
+    if not re.search(LIVE_INTERACTIVE_PROMPT_PATTERN, "Add steering, or wait for the next approval."):
+        print("FAIL: live interactive prompt pattern did not match current guidance")
+        return 1
+    if not re.search(LIVE_INTERACTIVE_PROMPT_PATTERN, "Add steering, or wait for the next run or approval."):
+        print("FAIL: live interactive prompt pattern did not preserve older guidance")
+        return 1
+    if not re.search(LIVE_INTERACTIVE_PROMPT_PATTERN, "Add steering to redirect the current run."):
+        print("FAIL: live interactive prompt pattern did not match active-run steering guidance")
+        return 1
+    if "Approved [a-z_]+\\. Next node is" in STOP_PATTERN:
+        print("FAIL: approval handoff should not be treated as a stop boundary")
+        return 1
+    if not re.search(READY_PATTERN, "Add steering, or wait for the next approval."):
+        print("FAIL: ready pattern did not match current paused/failure guidance")
+        return 1
+    if not re.search(READY_PATTERN, "Add steering, or wait for the next run or approval."):
+        print("FAIL: ready pattern did not preserve older paused/failure guidance")
+        return 1
+    if not re.search(READY_PATTERN, "PgUp/PgDn scroll · implement_experiments failed · workspace"):
+        print("FAIL: ready pattern did not match failed-node interactive footer")
+        return 1
+    if not re.search(DOCTOR_READY_PATTERN, "+ [OK] codex-research-backend-model: configured"):
+        print("FAIL: doctor ready pattern did not match current doctor output")
+        return 1
+    if not re.search(DOCTOR_READY_PATTERN, "+ [OK] runs-dir-write: Run store write probe succeeded"):
+        print("FAIL: doctor ready pattern did not match run-store write output")
+        return 1
+    try:
+        raise WaitTimeout("Bye", "boundary transcript")
+    except WaitTimeout as exc:
+        if exc.transcript != "boundary transcript":
+            print("FAIL: cleanup timeout did not preserve transcript")
+            return 1
+    if pending_transition_target({
+        "graph": {"pendingTransition": {"targetNode": "generate_hypotheses"}}
+    }) != "generate_hypotheses":
+        print("FAIL: pending transition target was not detected")
+        return 1
+    if node_to_observe_after_command(collect_needs_approval, "analyze_papers", "/approve") != "analyze_papers":
+        print("FAIL: approve without transition target should observe the requested next node")
+        return 1
+    if node_to_observe_after_command({
+        "currentNode": "analyze_papers",
+        "graph": {
+            "pendingTransition": {"targetNode": "generate_hypotheses"},
+            "nodeStates": {"analyze_papers": {"status": "needs_approval"}},
+        },
+    }, "analyze_papers", "/approve") != "generate_hypotheses":
+        print("FAIL: approve handoff should observe the pending transition target")
+        return 1
+    if expand_command_override("/agent retry {next_node} {run_id}", run_id, "implement_experiments") != (
+        "/agent retry implement_experiments run-validation"
+    ):
+        print("FAIL: command override placeholders were not expanded")
+        return 1
+    if not command_override_replaces_continue_command("/agent retry implement_experiments run-validation"):
+        print("FAIL: slash command override was not recognized as a command replacement")
+        return 1
+    if command_override_replaces_continue_command("Steering implement_experiments for run-validation"):
+        print("FAIL: text steering override was incorrectly treated as a command replacement")
+        return 1
+    if expand_command_override("Steer {next_node} for {run_id}", run_id, "implement_experiments") != (
+        "Steer implement_experiments for run-validation"
+    ):
+        print("FAIL: text command override placeholders were not expanded")
+        return 1
+    if command_override_replaces_continue_command("  Steer implement_experiments for run-validation"):
+        print("FAIL: indented text steering override was incorrectly treated as a command replacement")
+        return 1
+    print("PASS: live-validation continue command selection self-test")
+    return 0
+
+
+def run_resume_manifest_selftest() -> int:
+    with tempfile.TemporaryDirectory(prefix="autolabos-live-validation-resume-manifest-") as tmp:
+        run_dir = Path(tmp) / ".autolabos" / "runs" / "run-validation"
+        node_dir = run_dir / "implement_experiments"
+        response_dir = node_dir / "unit_chunk_responses"
+        section_dir = node_dir / "unit_sections"
+        prompt_dir = node_dir / "unit_chunk_prompts"
+        response_dir.mkdir(parents=True)
+        section_dir.mkdir(parents=True)
+        prompt_dir.mkdir(parents=True)
+        (response_dir / "artifact__chunk_1.txt").write_text("ok", encoding="utf-8")
+        (response_dir / "artifact__chunk_2_error.txt").write_text("timeout", encoding="utf-8")
+        (response_dir / "artifact__chunk_2_partial_on_error.txt").write_text("partial", encoding="utf-8")
+        (section_dir / "artifact__chunk_1.txt").write_text("def ok():\n    return True\n", encoding="utf-8")
+        (section_dir / "artifact__chunk_1__candidate.py").write_text("def ok():\n    return True\n", encoding="utf-8")
+        (section_dir / "__pycache__").mkdir()
+        (section_dir / "__pycache__" / "artifact__chunk_1.cpython-313.pyc").write_bytes(b"cache")
+        (prompt_dir / "artifact__chunk_1.txt").write_text("prompt", encoding="utf-8")
+        (prompt_dir / "artifact__chunk_2.txt").write_text("prompt", encoding="utf-8")
+        (node_dir / "progress.jsonl").write_text('{"index": 7, "message": "chunk done"}\n', encoding="utf-8")
+        (run_dir / "implement_task_spec.json").write_text(
+            json.dumps({"context": {"plan_hash": "plan-fingerprint-a"}}),
+            encoding="utf-8",
+        )
+        manifest_path = persist_staged_llm_resume_manifest(
+            run_dir,
+            "implement_experiments",
+            "timeout",
+            "2026-07-05T00:00:00Z",
+        )
+        if manifest_path is None or not manifest_path.exists():
+            print("FAIL: resume manifest was not written")
+            return 1
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        if manifest.get("status") != "resumable":
+            print("FAIL: resume manifest status was not resumable")
+            return 1
+        if manifest.get("latest_progress_index") != 7:
+            print("FAIL: resume manifest did not capture latest progress index")
+            return 1
+        if manifest.get("plan_hash") != "plan-fingerprint-a":
+            print("FAIL: resume manifest did not capture the current plan fingerprint")
+            return 1
+        if "unit_chunk_responses/artifact__chunk_1.txt" not in manifest.get("completed_chunk_responses", []):
+            print("FAIL: resume manifest did not capture completed chunk response")
+            return 1
+        if "unit_chunk_responses/artifact__chunk_2_error.txt" not in manifest.get("incomplete_or_failed_artifacts", []):
+            print("FAIL: resume manifest did not capture incomplete artifact")
+            return 1
+        if manifest.get("next_unfinished_section_id") != "chunk_2":
+            print("FAIL: resume manifest did not expose the next unfinished section")
+            return 1
+        if manifest.get("next_unfinished_prompt") != "unit_chunk_prompts/artifact__chunk_2.txt":
+            print("FAIL: resume manifest did not link the next unfinished prompt")
+            return 1
+        (section_dir / "artifact__chunk_2.txt").write_text("def recovered():\n    return True\n", encoding="utf-8")
+        (response_dir / "artifact__chunk_2_part_1_error.txt").write_text("subdivision timeout", encoding="utf-8")
+        (prompt_dir / "artifact__chunk_2_part_1.txt").write_text("prompt", encoding="utf-8")
+        (prompt_dir / "artifact__chunk_3.txt").write_text("prompt", encoding="utf-8")
+        manifest_path = persist_staged_llm_resume_manifest(
+            run_dir,
+            "implement_experiments",
+            "timeout",
+            "2026-07-05T00:00:01Z",
+        )
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        if "unit_chunk_responses/artifact__chunk_2_error.txt" in manifest.get("incomplete_or_failed_artifacts", []):
+            print("FAIL: resume manifest kept stale incomplete artifact for a completed section")
+            return 1
+        if "unit_chunk_responses/artifact__chunk_2_part_1_error.txt" in manifest.get("incomplete_or_failed_artifacts", []):
+            print("FAIL: resume manifest kept stale sub-part artifact for a completed parent section")
+            return 1
+        if manifest.get("next_unfinished_section_id") != "chunk_3":
+            print("FAIL: resume manifest did not advance to the prompt-only unfinished section")
+            return 1
+        if manifest.get("next_unfinished_prompt") != "unit_chunk_prompts/artifact__chunk_3.txt":
+            print("FAIL: resume manifest did not link the prompt-only unfinished section")
+            return 1
+        if any(
+            "__pycache__" in item or item.endswith(".pyc") or item.endswith("__candidate.py")
+            for item in manifest.get("completed_sections", [])
+        ):
+            print("FAIL: resume manifest leaked derived Python cache or candidate artifacts")
+            return 1
+    print("PASS: live-validation staged_llm resume manifest self-test")
+    return 0
+
+
+def main() -> int:
+    repo_root = Path(__file__).resolve().parents[1]
+    default_workspace = repo_root.parent / ".autolabos-validation" / "live-validation"
+    workspace = Path(os.environ.get("AUTOLABOS_VALIDATION_WORKSPACE", str(default_workspace))).resolve()
+    output_dir = Path(os.environ.get("AUTOLABOS_VALIDATION_PREFLIGHT_OUT", str(repo_root / "outputs" / "live-validation-preflight"))).resolve()
+    run_id = os.environ.get("AUTOLABOS_VALIDATION_RUN_ID", "").strip()
+    next_node = os.environ.get("AUTOLABOS_VALIDATION_NEXT_NODE", "analyze_papers").strip()
+    default_node_args = "--top-n 12" if next_node == "analyze_papers" else ""
+    node_args = os.environ.get("AUTOLABOS_VALIDATION_NEXT_NODE_ARGS", default_node_args).strip()
+    command_override = os.environ.get("AUTOLABOS_VALIDATION_COMMAND", "").strip()
+    timeout = float(os.environ.get("AUTOLABOS_VALIDATION_NEXT_TIMEOUT_SEC", "3600"))
+    max_wall_seconds = float(os.environ.get("AUTOLABOS_VALIDATION_NEXT_MAX_WALL_SEC", str(max(timeout, timeout * 4))))
+    handoff_grace_seconds = float(os.environ.get("AUTOLABOS_VALIDATION_HANDOFF_GRACE_SEC", str(HANDOFF_GRACE_SECONDS)))
+    stale_running_seconds = float(os.environ.get("AUTOLABOS_VALIDATION_STALE_RUNNING_SEC", "3600"))
+    dist_main = repo_root / "dist" / "cli" / "main.js"
+    try:
+        validate_next_node(next_node)
+    except ValueError as exc:
+        print(f"FAIL: {exc}")
+        return 1
+    output_dir.mkdir(parents=True, exist_ok=True)
+    output_path = output_dir / f"live-validation-continue-{next_node}-output.txt"
+
+    if not run_id:
+        print("FAIL: AUTOLABOS_VALIDATION_RUN_ID is required")
+        return 1
+    if not workspace.exists():
+        print(f"FAIL: workspace does not exist: {workspace}")
+        return 1
+    if not dist_main.exists():
+        print(f"FAIL: expected built CLI at {dist_main}; run npm run build first")
+        return 1
+    if os.environ.get("AUTOLABOS_VALIDATION_DISABLE_STALE_RUNNING_RECONCILE", "") != "1":
+        if reconcile_stale_running_before_attach(
+            workspace,
+            run_id,
+            max_age_seconds=stale_running_seconds,
+        ):
+            print(f"INFO: reconciled stale running state before attaching to run {run_id}.")
+    record_before = load_run_record(workspace, run_id)
+    force_run_active = os.environ.get("AUTOLABOS_VALIDATION_FORCE_RUN_ACTIVE", "") == "1"
+    active_running_before = should_observe_active_running(record_before, force_run_active=force_run_active)
+    if force_run_active and is_active_running(record_before):
+        next_node = current_node(record_before) or next_node
+    if not active_running_before:
+        try:
+            select_continue_command(
+                record_before,
+                run_id,
+                next_node,
+                node_args,
+                command_override,
+            )
+        except ValueError as exc:
+            print(f"FAIL: {exc}")
+            return 1
+
+    env = os.environ.copy()
+    env["COLUMNS"] = "220"
+    env["LINES"] = "40"
+
+    master_fd, slave_fd = pty.openpty()
+    proc = subprocess.Popen(
+        ["node", str(dist_main)],
+        cwd=str(workspace),
+        env=env,
+        stdin=slave_fd,
+        stdout=slave_fd,
+        stderr=slave_fd,
+        preexec_fn=os.setsid,
+        close_fds=True,
+    )
+    os.close(slave_fd)
+
+    buffer_text = ""
+    wait_node = next_node
+    sent_command_override = False
+    sent_text_command_override = False
+    sent_commands: list[str] = []
+    try:
+        buffer_text = wait_for(
+            master_fd,
+            READY_PATTERN,
+            40,
+            buffer_text,
+        )
+        record_after_attach = load_run_record(workspace, run_id)
+        active_running_after_attach = should_observe_active_running(
+            record_after_attach,
+            force_run_active=force_run_active
+        )
+        if active_running_before or active_running_after_attach:
+            wait_node = current_node(record_after_attach) or current_node(record_before) or next_node
+            initial_signature = record_boundary_signature(record_after_attach, wait_node)
+            if command_override:
+                command = expand_command_override(command_override, run_id, wait_node)
+                send_line(master_fd, command)
+                sent_commands.append(command)
+                sent_command_override = True
+                sent_text_command_override = not command_override_replaces_continue_command(command_override)
+                print(f"INFO: {wait_node} is already running; sent command override and observing until the next stop boundary.")
+            else:
+                print(f"INFO: {wait_node} is already running; observing until the next stop boundary.")
+        else:
+            if not force_run_active:
+                send_line(master_fd, "/doctor")
+                buffer_text = wait_for(master_fd, DOCTOR_READY_PATTERN, 60, buffer_text)
+                buffer_text = wait_for(master_fd, DOCTOR_HARNESS_PATTERN, 60, buffer_text)
+            record_before_command = load_run_record(workspace, run_id)
+            try:
+                command = select_continue_command(
+                    record_before_command,
+                    run_id,
+                    next_node,
+                    node_args,
+                    command_override,
+                )
+            except ValueError as exc:
+                print(f"FAIL: {exc}")
+                return 1
+            wait_node = node_to_observe_after_command(record_before_command, next_node, command)
+            initial_signature = record_boundary_signature(record_before_command, wait_node)
+            send_line(master_fd, command)
+            sent_commands.append(command)
+            sent_command_override = bool(command_override and command_override_replaces_continue_command(command_override))
+            sent_text_command_override = False
+        buffer_text = wait_for_stop_boundary(
+            master_fd,
+            stop_pattern_for_node(wait_node),
+            timeout,
+            buffer_text,
+            workspace=workspace,
+            run_id=run_id,
+            node=wait_node,
+            initial_signature=initial_signature,
+            accept_live_prompt_boundary=False,
+            max_wall_seconds=max_wall_seconds
+        )
+        observed_handoffs = 0
+        while observed_handoffs < 3:
+            record_after_boundary = try_load_run_record(workspace, run_id)
+            active_node = running_handoff_node(record_after_boundary)
+            if not active_node:
+                active_node = wait_for_running_handoff(
+                    workspace,
+                    run_id,
+                    wait_node,
+                    handoff_grace_seconds
+                )
+            if not active_node:
+                break
+            observed_handoffs += 1
+            wait_node = active_node
+            record_after_boundary = try_load_run_record(workspace, run_id)
+            initial_signature = (
+                record_boundary_signature(record_after_boundary, wait_node)
+                if record_after_boundary
+                else None
+            )
+            if command_override and not sent_command_override:
+                command = expand_command_override(command_override, run_id, wait_node)
+                send_line(master_fd, command)
+                sent_commands.append(command)
+                sent_command_override = True
+                sent_text_command_override = not command_override_replaces_continue_command(command_override)
+                print(f"INFO: {wait_node} is already running after the prior boundary; sent command override and observing the handoff.")
+            else:
+                print(f"INFO: {wait_node} is already running after the prior boundary; observing the handoff.")
+            buffer_text = wait_for_stop_boundary(
+                master_fd,
+                stop_pattern_for_node(wait_node),
+                timeout,
+                buffer_text,
+                workspace=workspace,
+                run_id=run_id,
+                node=wait_node,
+                initial_signature=initial_signature,
+                accept_live_prompt_boundary=False,
+                max_wall_seconds=max_wall_seconds
+            )
+        send_line(master_fd, "/quit")
+        try:
+            buffer_text = wait_for(master_fd, r"Bye", 20, buffer_text)
+        except WaitTimeout as exc:
+            # The requested node boundary has already been observed. Some live
+            # TUI states do not emit a Bye line after /quit, so keep the
+            # transcript and let process cleanup in finally terminate the PTY.
+            buffer_text = exc.transcript
+        try:
+            proc.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            pass
+    except WaitTimeout as exc:
+        output_path.write_text(exc.transcript, encoding="utf-8")
+        timeout_message = helper_timeout_message(wait_node, timeout, max_wall_seconds)
+        terminate_process_group(proc)
+        if persist_helper_timeout_boundary(workspace, run_id, wait_node, timeout_message):
+            print(f"INFO: persisted helper-timeout boundary for {wait_node}.")
+        print(f"FAIL: Validation continue timed out waiting for {exc.pattern}; output={output_path}")
+        return 1
+    finally:
+        if proc.poll() is None:
+            terminate_process_group(proc)
+        try:
+            os.close(master_fd)
+        except OSError:
+            pass
+
+    output_path.write_text(buffer_text, encoding="utf-8")
+    command_summary = repr(sent_commands) if sent_commands else "none (observed active run)"
+    print(
+        f"PASS: Validation requested node {next_node}; sent commands={command_summary}; "
+        f"final observed node={wait_node}; output={output_path}"
+    )
+    return 0
+
+
+if __name__ == "__main__":
+    if os.environ.get("AUTOLABOS_VALIDATION_CONTINUE_SELFTEST") == "1":
+        raise SystemExit(run_selftest())
+    if os.environ.get("AUTOLABOS_VALIDATION_RESUME_MANIFEST_SELFTEST") == "1":
+        raise SystemExit(run_resume_manifest_selftest())
+    raise SystemExit(main())

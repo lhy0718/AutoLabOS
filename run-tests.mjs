@@ -1,0 +1,64 @@
+import { spawn } from "node:child_process";
+import path from "node:path";
+import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
+import { fileURLToPath } from "node:url";
+
+const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)));
+const validationRoot =
+  process.env.AUTOLABOS_VALIDATION_WORKSPACE_ROOT || getDefaultValidationWorkspaceRoot(repoRoot);
+const sharedTestTmpRoot = path.join(validationRoot, ".tmp");
+
+mkdirSync(sharedTestTmpRoot, { recursive: true });
+const testTmpRoot = mkdtempSync(path.join(sharedTestTmpRoot, "run-"));
+process.once("exit", () => {
+  rmSync(testTmpRoot, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+});
+
+process.env.TMPDIR = testTmpRoot;
+process.env.TMP = testTmpRoot;
+process.env.TEMP = testTmpRoot;
+
+const rawArgs = process.argv.slice(2);
+const rootArgs = rawArgs.filter((arg) => arg !== "--runInBand");
+const hasFilteredArgs = rootArgs.length > 0;
+
+if (rawArgs.includes("--runInBand")) {
+  console.warn("[test] Ignoring unsupported --runInBand for Vitest.");
+}
+
+const vitestExit = await runCommand("vitest", ["run", ...rootArgs]);
+if (vitestExit !== 0) {
+  process.exitCode = vitestExit;
+} else if (!hasFilteredArgs) {
+  process.exitCode = await runCommand("npm", ["--prefix", "web", "run", "test"]);
+}
+
+function runCommand(command, args) {
+  return new Promise((resolve) => {
+    const child = spawn(resolveCommand(command), args, {
+      stdio: "inherit",
+      env: process.env
+    });
+
+    child.on("exit", (code, signal) => {
+      if (signal) {
+        resolve(1);
+        return;
+      }
+      resolve(code ?? 0);
+    });
+
+    child.on("error", () => resolve(1));
+  });
+}
+
+function resolveCommand(command) {
+  if (process.platform === "win32") {
+    return `${command}.cmd`;
+  }
+  return command;
+}
+
+function getDefaultValidationWorkspaceRoot(projectRoot) {
+  return path.join(path.dirname(projectRoot), ".autolabos-validation");
+}

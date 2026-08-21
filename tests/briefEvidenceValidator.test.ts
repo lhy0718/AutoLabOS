@@ -1,0 +1,262 @@
+import { describe, expect, it } from "vitest";
+
+import { evaluateBriefEvidenceAgainstResults } from "../src/core/analysis/briefEvidenceValidator.js";
+import type { AnalysisReport } from "../src/core/resultAnalysis.js";
+import type { ResultsArtifactV2 } from "../src/core/analysis/resultsTableSchema.js";
+import type { MarkdownRunBriefSections } from "../src/core/runs/runBriefParser.js";
+
+function makeReport(overrides: Partial<AnalysisReport> = {}): AnalysisReport {
+  return {
+    overview: {
+      objective_status: "met",
+      objective_summary: "Objective met",
+      execution_runs: 3
+    },
+    plan_context: {
+      selected_design: {
+        baselines: ["baseline_a", "baseline_b"]
+      }
+    },
+    results_artifact: makeResultsArtifact(2, 1),
+    failure_taxonomy: [],
+    statistical_summary: {
+      total_trials: 3,
+      executed_trials: 3,
+      cached_trials: 0,
+      confidence_intervals: [
+        {
+          metric_key: "measure-primary",
+          label: "Primary measure 95% CI",
+          lower: 0.89,
+          upper: 0.93,
+          level: 0.95,
+          sample_size: 3,
+          source: "metrics",
+          summary: "The primary measure remained above the threshold."
+        }
+      ],
+      stability_metrics: [],
+      effect_estimates: [],
+      notes: ["95% CI reported for the primary metric."]
+    },
+    ...overrides
+  } as unknown as AnalysisReport;
+}
+
+function makeBriefSections(
+  overrides: Partial<MarkdownRunBriefSections> = {}
+): MarkdownRunBriefSections {
+  return {
+    title: "Research Brief",
+    baselineComparator: "Compare against two baselines.",
+    targetComparison: "Evaluate the proposal against two baselines on accuracy.",
+    minimumAcceptableEvidence: "Run at least 3 trials and report confidence intervals.",
+    minimumExperimentPlan: "Execute 3 trials for the proposed method and each baseline.",
+    paperWorthinessGate: "Only advance with confidence intervals and matched-baseline coverage.",
+    paperCeiling: "Cap weak evidence at research_memo.",
+    ...overrides
+  };
+}
+
+describe("briefEvidenceValidator", () => {
+  it("skips validation when no brief governance is present", () => {
+    const assessment = evaluateBriefEvidenceAgainstResults({
+      briefSections: undefined,
+      report: makeReport()
+    });
+
+    expect(assessment.enabled).toBe(false);
+    expect(assessment.status).toBe("not_applicable");
+    expect(assessment.checks).toHaveLength(0);
+  });
+
+  it("fails when executed evidence falls below the brief floor", () => {
+    const assessment = evaluateBriefEvidenceAgainstResults({
+      briefSections: makeBriefSections(),
+      report: makeReport({
+        plan_context: {
+          selected_design: {
+            baselines: ["baseline_a"]
+          }
+        } as AnalysisReport["plan_context"]["selected_design"],
+        results_artifact: makeResultsArtifact(1, 1),
+        failure_taxonomy: [
+          {
+            id: "gap_1",
+            category: "evidence_gap",
+            status: "fail",
+            summary: "Only one run completed."
+          }
+        ] as AnalysisReport["failure_taxonomy"],
+        statistical_summary: {
+          total_trials: 1,
+          executed_trials: 1,
+          cached_trials: 0,
+          confidence_intervals: [],
+          stability_metrics: [],
+          effect_estimates: [],
+          notes: []
+        } as AnalysisReport["statistical_summary"]
+      })
+    });
+
+    expect(assessment.enabled).toBe(true);
+    expect(assessment.status).toBe("fail");
+    expect(assessment.recommended_action).toBe("backtrack_to_design");
+    expect(assessment.failures).toContain("Executed evidence includes the required baseline coverage");
+    expect(assessment.failures).toContain("Executed evidence meets the brief run/fold floor");
+    expect(assessment.failures).toContain(
+      "Confidence intervals are present when the brief asks for statistical support"
+    );
+  });
+
+  it("describes flagged evidence gaps as unresolved rather than unflagged", () => {
+    const assessment = evaluateBriefEvidenceAgainstResults({
+      briefSections: makeBriefSections(),
+      report: makeReport({
+        failure_taxonomy: [
+          {
+            id: "missing_resource_metrics",
+            category: "evidence_gap",
+            severity: "high",
+            status: "observed",
+            summary: "Required runtime and memory evidence is missing from the completed metrics payload.",
+            evidence: ["metrics.resource_metrics"],
+            recommended_action: "Repair metrics export before paper-scale review."
+          }
+        ] as AnalysisReport["failure_taxonomy"]
+      })
+    });
+
+    expect(assessment.status).toBe("fail");
+    expect(assessment.actual.evidence_gap_count).toBe(1);
+    expect(assessment.failures).toContain("Unresolved evidence-scale or blocking scope gaps remain");
+    expect(assessment.summary).toContain("Unresolved evidence-scale or blocking scope gaps remain");
+    expect(assessment.summary).not.toContain("did not flag");
+    expect(
+      assessment.checks.find((check) => check.id === "analysis_evidence_gaps_clear")?.detail
+    ).toContain("Analyze-results flagged blocking evidence_gap=1");
+  });
+
+  it("passes when results satisfy the brief contract", () => {
+    const assessment = evaluateBriefEvidenceAgainstResults({
+      briefSections: makeBriefSections(),
+      report: makeReport()
+    });
+
+    expect(assessment.enabled).toBe(true);
+    expect(assessment.status).toBe("pass");
+    expect(assessment.failures).toHaveLength(0);
+    expect(assessment.requirements.minimum_baseline_count).toBe(2);
+    expect(assessment.requirements.minimum_runs_or_folds).toBe(3);
+  });
+
+  it("does not fail the brief gate solely for documented low-severity scope limitations", () => {
+    const assessment = evaluateBriefEvidenceAgainstResults({
+      briefSections: makeBriefSections(),
+      report: makeReport({
+        failure_taxonomy: [
+          {
+            id: "scope_limit",
+            category: "scope_limit",
+            severity: "low",
+            status: "risk",
+            summary: "Scope limitation: optional candidate condition b variant was documented but not required.",
+            evidence: ["plan_context.selected_design.risks"],
+            recommended_action: "Document the limitation explicitly."
+          }
+        ] as AnalysisReport["failure_taxonomy"]
+      })
+    });
+
+    expect(assessment.enabled).toBe(true);
+    expect(assessment.status).toBe("pass");
+    expect(assessment.actual.scope_limit_count).toBe(0);
+    expect(assessment.failures).toHaveLength(0);
+  });
+
+  it("fails when the brief requires all planned conditions but execution covers only a subset", () => {
+    const assessment = evaluateBriefEvidenceAgainstResults({
+      briefSections: makeBriefSections({
+        minimumAcceptableEvidence:
+          "All planned conditions must execute successfully and report bootstrap confidence intervals.",
+        minimumExperimentPlan:
+          "Execute one named tuned baseline run and three alternative recipe conditions."
+      }),
+      report: makeReport({
+        plan_context: {
+          selected_design: {
+            baselines: ["locked_baseline"],
+            implementation_notes: [
+              "Planned tuned conditions: locked standard tuned baseline; candidate condition a; candidate condition b; candidate condition c."
+            ],
+            evaluation_steps: [],
+            metrics: [],
+            resource_notes: [],
+            risks: []
+          }
+        } as AnalysisReport["plan_context"],
+        results_artifact: makeResultsArtifact(1, 2)
+      })
+    });
+
+    expect(assessment.enabled).toBe(true);
+    expect(assessment.status).toBe("fail");
+    expect(assessment.requirements.minimum_condition_count).toBe(4);
+    expect(assessment.actual.executed_condition_count).toBe(3);
+    expect(assessment.failures).toContain("Executed evidence covers all planned conditions");
+  });
+});
+
+function makeResultsArtifact(
+  baselineCount: number,
+  subjectCount: number
+): ResultsArtifactV2 {
+  const baselineSeries = Array.from({ length: baselineCount }, (_, index) => ({
+    id: `series-reference-${index + 1}`,
+    label: `Reference ${index + 1}`,
+    role: "baseline" as const,
+    dimensions: { cohort: index + 1 }
+  }));
+  const subjectSeries = Array.from({ length: subjectCount }, (_, index) => ({
+    id: `series-subject-${index + 1}`,
+    label: `Subject ${index + 1}`,
+    role: index === 0 ? "primary" as const : "comparator" as const,
+    dimensions: { cohort: index + 1 }
+  }));
+  const observations = [
+    ...baselineSeries.map((series, index) => ({
+      id: `observation-reference-${index + 1}`,
+      series_id: series.id,
+      metric_id: "measure-primary",
+      scope: { partition: "evaluation" },
+      value: 10 + index
+    })),
+    ...subjectSeries.map((series, index) => ({
+      id: `observation-subject-${index + 1}`,
+      series_id: series.id,
+      metric_id: "measure-primary",
+      scope: { partition: "evaluation" },
+      value: 20 + index
+    }))
+  ];
+  return {
+    schema_version: "2.0",
+    metrics: [
+      {
+        id: "measure-primary",
+        label: "Primary measure",
+        direction: "higher_better",
+        unit: "points"
+      }
+    ],
+    series: [...baselineSeries, ...subjectSeries],
+    observations,
+    comparisons: baselineSeries.map((series, index) => ({
+      id: `comparison-reference-${index + 1}`,
+      subject_observation_id: "observation-subject-1",
+      reference_observation_id: `observation-reference-${index + 1}`,
+      delta: 20 - (10 + index)
+    }))
+  };
+}

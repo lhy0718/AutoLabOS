@@ -1,0 +1,106 @@
+---
+name: paper-scale-research-loop
+description: Use this skill when the goal is to move AutoLabOS outputs from workflow completion toward evidence-backed, baseline-bearing, paper-scale research quality.
+contract_version: 1
+contract_kind: codex_skill
+runtime_contract: true
+gate: paper_scale_evidence_ceiling
+validation: paper_quality_bar_review
+---
+
+# Paper-Scale Research Loop
+
+## Purpose
+Drive real experiments, hypothesis refinement, evidence review, and manuscript improvement until the strongest branch is honestly judged against paper-scale standards.
+
+This skill exists to prevent:
+- workflow completion from being misreported as research completion
+- write_paper completion from being misreported as paper readiness
+- polished text from being mistaken for evidence-backed claims
+
+## Use this skill when
+Use this skill when the user asks to:
+- assess research quality
+- improve experiment quality
+- judge manuscript readiness honestly
+- push a topic toward paper scale
+- decide whether outputs are only a memo, a draft, or a serious experimental paper candidate
+
+## Required research discipline
+Keep the broad topic fixed, but allow hypotheses and experiment design to evolve.
+
+Classify the evaluation regime before deciding whether human evidence is
+required:
+
+- `controlled_deterministic_fault_injection` may use registry-derived gold
+  without human adjudication when an independently implemented oracle replays
+  every mutation, binds the registry/gold/split/report hashes, proves
+  development/test source and fault-family disjointness, and keeps the claim
+  ceiling at `registered_fault_families_only`.
+- `naturalistic_human_adjudicated` requires the existing independent human
+  label, mutation-isolation, source, and license evidence whenever the claim
+  generalizes to naturally occurring defects or redistributable external data.
+- Do not downgrade a valid controlled benchmark merely because A3 human review
+  is absent. Do downgrade any attempt to turn controlled results into
+  naturalistic or legal claims without the corresponding external evidence.
+
+Always evaluate:
+- broad topic
+- current hypothesis
+- related-work grounding
+- baseline or comparator presence
+- executed experiments
+- quantitative result tables
+- claim-to-evidence linkage
+- limitations and failure cases
+- strongest-branch selection
+- reviewer-grade evidence scale: sample size, one-example gains, seed replication, train-budget depth, and whether claimed interactions exceed the observed grid evidence
+
+## Hard gate
+Downgrade the output if any of the following are missing:
+- fixed broad topic
+- explicit current hypothesis
+- grounded related work
+- baseline/comparator
+- real executed experiment
+- quantitative comparison table
+- claim-to-evidence linkage
+- limitations/failure cases
+
+Also downgrade or block paper-scale progression when:
+- the headline gain can be explained by a single changed evaluation example
+- positive tuning claims have no repeated-seed support
+- evaluation sets or optimizer steps are only smoke/preflight scale
+- a method-centered paper misses canonical method references needed for related-work grounding
+- a full-text evidence source is accepted from a filename, URL, or hash without checking that
+  its bytes are a real PDF or plain text rather than an HTML challenge or error response
+
+## Review-gate continuation rule
+When a review gate blocks paper-scale progression, treat the block as a governed outcome, not as a writing problem.
+
+- Do not force `write_paper` after a paper-quality reject unless the user explicitly asks for a downgraded memo/draft.
+- Follow the recommended transition or backtrack target before attempting manuscript generation again.
+- If the objective metric is not met, preserve the negative result and lower the claim ceiling instead of polishing around it.
+- If implementation executes fewer conditions, seeds, baselines, or comparisons than the approved design required, treat that as an evidence-scope blocker until rerun or explicitly downgraded.
+- Require the next hypothesis/design pass to state what evidence gap it is repairing.
+- When review emits node-strengthening recommendations, feed them into the meta-harness or the named upstream node rather than trying to repair the problem only in `write_paper`.
+
+## Output format
+1. Current artifact status
+2. Research-question status
+3. Hypothesis status
+4. Related-work depth
+5. Experimental evidence status
+6. Baseline/comparator status
+7. Quantitative result status
+8. Claim-to-evidence linkage status
+9. Limitations/failure-case status
+10. Honest output genre recommendation
+11. Strongest next action
+
+## Guardrails
+- Do not reward polish without evidence.
+- Do not over-credit abstract-only or plan-only runs.
+- Do not call something paper-ready unless the evidence supports it.
+- Prefer the strongest validated branch, not the most verbose one.
+- Never relabel deterministic oracle evidence as human adjudication.

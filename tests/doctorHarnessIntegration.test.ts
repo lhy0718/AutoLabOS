@@ -1,0 +1,1059 @@
+import path from "node:path";
+import os from "node:os";
+import { mkdtempSync, rmSync } from "node:fs";
+import { promises as nodeFs } from "node:fs";
+import { access, chmod, mkdir, utimes, writeFile } from "node:fs/promises";
+
+import { afterEach, describe, expect, it, vi } from "vitest";
+
+import * as doctorModule from "../src/core/doctor.js";
+import { buildGuidedResearchBriefMarkdown } from "../src/core/runs/researchBriefFiles.js";
+import { PROMOTION_SOURCE_LOCK_FILENAME } from "../src/core/runs/topicProbePromotionSourceLock.js";
+import { CodexNativeClient } from "../src/integrations/codex/codexCliClient.js";
+
+const tempDirs: string[] = [];
+
+afterEach(() => {
+  while (tempDirs.length > 0) {
+    const dir = tempDirs.pop();
+    if (dir) {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  }
+});
+
+describe("runDoctorReport", () => {
+  it("warns without blocking for a fresh active promotion source lock", async () => {
+    const workspace = createTempWorkspace("autolabos-doctor-active-promotion-lock-");
+    await seedDoctorTooling(workspace);
+    await seedDoctorWorkspace(workspace);
+    const lockPath = await seedPromotionSourceLock(workspace, "run-active", "active-secret");
+
+    const report = await withWorkspacePath(workspace, () =>
+      doctorModule.runDoctorReport(createCodexStub(), {
+        workspaceRoot: workspace,
+        includeHarnessValidation: false
+      })
+    );
+
+    const lockCheck = report.checks.find((check) => check.name === "promotion-source-locks");
+    expect(report.readiness.blocked).toBe(false);
+    expect(report.readiness.warningChecks).toContain("promotion-source-locks");
+    expect(lockCheck).toEqual(expect.objectContaining({ status: "warning", ok: true }));
+    expect(lockCheck?.detail).toContain(`pid=${process.pid}`);
+    expect(lockCheck?.detail).not.toContain("active-secret");
+    expect(doctorModule.buildDoctorHighlightLines(report)).toEqual(
+      expect.arrayContaining([expect.stringContaining("promotion source locks")])
+    );
+    await expect(access(lockPath)).resolves.toBeUndefined();
+  });
+
+  it("blocks readiness for a stale promotion source lock without deleting it", async () => {
+    const workspace = createTempWorkspace("autolabos-doctor-stale-promotion-lock-");
+    await seedDoctorTooling(workspace);
+    await seedDoctorWorkspace(workspace);
+    const lockPath = await seedPromotionSourceLock(workspace, "run-stale", "stale-secret");
+    const oldTimestamp = new Date(Date.now() - 5 * 60 * 1000);
+    await utimes(lockPath, oldTimestamp, oldTimestamp);
+
+    const report = await withWorkspacePath(workspace, () =>
+      doctorModule.runDoctorReport(createCodexStub(), {
+        workspaceRoot: workspace,
+        includeHarnessValidation: false
+      })
+    );
+
+    const lockCheck = report.checks.find((check) => check.name === "promotion-source-locks");
+    expect(report.readiness.blocked).toBe(true);
+    expect(report.readiness.failedChecks).toContain("promotion-source-locks");
+    expect(lockCheck).toEqual(expect.objectContaining({ status: "fail", ok: false }));
+    expect(lockCheck?.detail).toContain("status=stale");
+    expect(lockCheck?.detail).toContain("Automatic deletion is disabled");
+    expect(lockCheck?.detail).not.toContain("stale-secret");
+    await expect(access(lockPath)).resolves.toBeUndefined();
+  });
+
+  it("parses only the explicit live-provider doctor option", () => {
+    expect(doctorModule.parseDoctorCommandArgs([])).toEqual({ liveProvider: false });
+    expect(doctorModule.parseDoctorCommandArgs(["--live-provider"])).toEqual({ liveProvider: true });
+    expect(doctorModule.parseDoctorCommandArgs(["--live-provider", "extra"])).toMatchObject({
+      liveProvider: false,
+      error: expect.stringContaining("Usage: /doctor [--live-provider]")
+    });
+  });
+
+  it("keeps the default doctor report provider-call-free", async () => {
+    const workspace = createTempWorkspace("autolabos-doctor-default-provider-check-");
+    await seedDoctorTooling(workspace);
+    await seedDoctorWorkspace(workspace);
+    const codex = createCodexStub();
+    const probeChatCompatibility = vi.fn().mockResolvedValue({ status: "compatible" });
+    Object.assign(codex, { probeChatCompatibility });
+
+    const report = await withWorkspacePath(workspace, () =>
+      doctorModule.runDoctorReport(codex, {
+        workspaceRoot: workspace,
+        llmMode: "codex_chatgpt_only",
+        includeHarnessValidation: false
+      })
+    );
+
+    expect(probeChatCompatibility).not.toHaveBeenCalled();
+    expect(report.checks.map((check) => check.name)).not.toContain("codex-chat-provider-compatibility");
+  });
+
+  it("runs exactly one opt-in configured chat-provider check", async () => {
+    const workspace = createTempWorkspace("autolabos-doctor-live-provider-check-");
+    await seedDoctorTooling(workspace);
+    await seedDoctorWorkspace(workspace);
+    const codex = createCodexStub();
+    const probeChatCompatibility = vi.fn().mockResolvedValue({ status: "compatible" });
+    Object.assign(codex, { probeChatCompatibility });
+
+    const report = await withWorkspacePath(workspace, () =>
+      doctorModule.runDoctorReport(codex, {
+        workspaceRoot: workspace,
+        llmMode: "codex_chatgpt_only",
+        liveProviderProbe: {
+          model: "configured-chat-model",
+          timeoutMs: 37
+        },
+        includeHarnessValidation: false
+      })
+    );
+
+    expect(probeChatCompatibility).toHaveBeenCalledTimes(1);
+    expect(probeChatCompatibility).toHaveBeenCalledWith({
+      model: "configured-chat-model",
+      timeoutMs: 37,
+      abortSignal: undefined
+    });
+    expect(report.checks).toContainEqual(expect.objectContaining({
+      name: "codex-chat-provider-compatibility",
+      ok: true,
+      status: "ok",
+      detail: expect.stringContaining("one fixed compatibility request")
+    }));
+  });
+
+  it.each([
+    ["auth_unavailable", "fail", true, "provider_auth_unavailable"],
+    ["request_rejected", "fail", true, "provider_request_rejected"],
+    ["fixture_active", "fail", true, "provider_fixture_active"],
+    ["rate_limited", "warning", false, "provider_rate_limited"],
+    ["timeout", "warning", false, "provider_timeout"],
+    ["transport_error", "warning", false, "provider_transport_error"],
+    ["empty_response", "warning", false, "provider_empty_response"],
+    ["provider_error", "warning", false, "provider_error"]
+  ] as const)(
+    "projects live provider status %s without raw details",
+    async (providerStatus, expectedStatus, expectedBlocking, expectedCode) => {
+      const check = await doctorModule.runCodexChatProviderCompatibilityCheck(
+        {
+          probeChatCompatibility: vi.fn().mockResolvedValue({ status: providerStatus })
+        } as any,
+        { model: "configured-chat-model" }
+      );
+
+      expect(doctorModule.getDoctorCheckStatus(check)).toBe(expectedStatus);
+      expect(check.ok).toBe(!expectedBlocking);
+      expect(check.detail).toContain(expectedCode);
+      expect(JSON.stringify(check)).not.toContain("private-provider-body");
+    }
+  );
+
+  it("suppresses unexpected live-provider exceptions", async () => {
+    const check = await doctorModule.runCodexChatProviderCompatibilityCheck(
+      {
+        probeChatCompatibility: vi.fn().mockRejectedValue(new Error("private-provider-body"))
+      } as any,
+      { model: "configured-chat-model" }
+    );
+
+    expect(check.detail).toContain("provider_error");
+    expect(JSON.stringify(check)).not.toContain("private-provider-body");
+  });
+
+  it("suppresses unexpected live-provider status values", async () => {
+    const check = await doctorModule.runCodexChatProviderCompatibilityCheck(
+      {
+        probeChatCompatibility: vi.fn().mockResolvedValue({ status: "private-status-detail" })
+      } as any,
+      { model: "configured-chat-model" }
+    );
+
+    expect(check.detail).toContain("provider_error");
+    expect(JSON.stringify(check)).not.toContain("private-status-detail");
+  });
+
+  it("standardizes an externally aborted provider check", async () => {
+    const controller = new AbortController();
+    controller.abort();
+    const privateAbort = new Error("private-abort-detail");
+    privateAbort.name = "AbortError";
+
+    await expect(doctorModule.runCodexChatProviderCompatibilityCheck(
+      {
+        probeChatCompatibility: vi.fn().mockRejectedValue(privateAbort)
+      } as any,
+      { model: "configured-chat-model", abortSignal: controller.signal }
+    )).rejects.toMatchObject({
+      name: "AbortError",
+      message: "Doctor provider compatibility check aborted."
+    });
+  });
+
+  it("warns without blocking when the optional OpenAlex API key is missing", async () => {
+    const workspace = createTempWorkspace("autolabos-doctor-openalex-key-");
+    await seedDoctorTooling(workspace);
+    await seedDoctorWorkspace(workspace);
+
+    const report = await withWorkspacePath(workspace, () =>
+      doctorModule.runDoctorReport(createCodexStub(), {
+        workspaceRoot: workspace,
+        openAlexApiKeyConfigured: false,
+        includeHarnessValidation: false
+      })
+    );
+
+    expect(report.readiness.blocked).toBe(false);
+    expect(report.readiness.warningChecks).toContain("openalex-api-key");
+    expect(report.checks).toContainEqual(
+      expect.objectContaining({
+        name: "openalex-api-key",
+        ok: true,
+        status: "warning",
+        detail: expect.stringContaining("fallback providers remain available")
+      })
+    );
+  });
+
+  it("passes the OpenAlex API key check without exposing the credential", async () => {
+    const workspace = createTempWorkspace("autolabos-doctor-openalex-key-configured-");
+    await seedDoctorTooling(workspace);
+    await seedDoctorWorkspace(workspace);
+
+    const report = await withWorkspacePath(workspace, () =>
+      doctorModule.runDoctorReport(createCodexStub(), {
+        workspaceRoot: workspace,
+        openAlexApiKeyConfigured: true,
+        includeHarnessValidation: false
+      })
+    );
+
+    expect(report.readiness.warningChecks).not.toContain("openalex-api-key");
+    expect(report.checks.find((check) => check.name === "openalex-api-key")).toEqual(
+      expect.objectContaining({ ok: true, status: "ok", detail: "OPENALEX_API_KEY detected" })
+    );
+  });
+
+  it("warns without blocking when the optional Semantic Scholar API key is missing", async () => {
+    const workspace = createTempWorkspace("autolabos-doctor-semantic-scholar-key-");
+    await seedDoctorTooling(workspace);
+    await seedDoctorWorkspace(workspace);
+
+    const report = await withWorkspacePath(workspace, () =>
+      doctorModule.runDoctorReport(createCodexStub(), {
+        workspaceRoot: workspace,
+        semanticScholarApiKeyConfigured: false,
+        includeHarnessValidation: false
+      })
+    );
+
+    expect(report.readiness.blocked).toBe(false);
+    expect(report.readiness.warningChecks).toContain("semantic-scholar-api-key");
+    expect(report.checks).toContainEqual(
+      expect.objectContaining({
+        name: "semantic-scholar-api-key",
+        ok: true,
+        status: "warning",
+        detail: expect.stringContaining("fallback providers remain available")
+      })
+    );
+  });
+
+  it("includes harness diagnostics for current workspace runs", async () => {
+    const workspace = createTempWorkspace("autolabos-doctor-harness-");
+    await seedDoctorTooling(workspace);
+    await seedDoctorWorkspace(workspace);
+    await writeFile(path.join(workspace, "ISSUES.md"), VALID_ISSUE_MARKDOWN, "utf8");
+    await writeJson(path.join(workspace, ".autolabos", "runs", "runs.json"), { runs: [] });
+
+    const report = await withWorkspacePath(workspace, () =>
+      doctorModule.runDoctorReport(createCodexStub(), {
+        workspaceRoot: workspace,
+        includeHarnessValidation: true,
+        includeHarnessTestRecords: false,
+        maxHarnessFindings: 10
+      })
+    );
+
+    expect(report.checks.length).toBeGreaterThan(0);
+    expect(report.harness).toBeDefined();
+    expect(report.harness?.status).toBe("ok");
+    expect(report.harness?.findings).toEqual([]);
+    expect(report.harness?.targets.find((target) => target.scope === "workspace")?.runStoreCount).toBe(1);
+    expect(report.readiness.blocked).toBe(false);
+    expect(report.readiness.executionApprovalMode).toBe("manual");
+    expect(report.readiness.failedChecks).toEqual([]);
+  });
+
+  it("includes the latest compiled paper page-budget check when available", async () => {
+    const workspace = createTempWorkspace("autolabos-doctor-page-budget-");
+    await seedDoctorTooling(workspace);
+    await seedDoctorWorkspace(workspace);
+    await writeFile(path.join(workspace, "ISSUES.md"), VALID_ISSUE_MARKDOWN, "utf8");
+    await writeJson(path.join(workspace, ".autolabos", "runs", "runs.json"), {
+      runs: [{ id: "run-1", updatedAt: "2026-03-19T12:00:00.000Z" }]
+    });
+    await writeJson(path.join(workspace, ".autolabos", "runs", "run-1", "paper", "compiled_page_validation.json"), {
+      status: "warn",
+      compiled_pdf_page_count: 3,
+      minimum_main_pages: 8,
+      target_main_pages: 8,
+      main_page_limit: 8,
+      message: "Compiled PDF is only 3 pages, below the configured minimum_main_pages of 8."
+    });
+
+    const report = await withWorkspacePath(workspace, () =>
+      doctorModule.runDoctorReport(createCodexStub(), {
+        workspaceRoot: workspace,
+        includeHarnessValidation: false
+      })
+    );
+
+    expect(report.checks).toContainEqual(
+      expect.objectContaining({
+        name: "paper-page-budget",
+        ok: false,
+        detail: expect.stringContaining("pages=3, minimum_main_pages=8")
+      })
+    );
+    expect(doctorModule.buildDoctorHighlightLines(report)).toEqual([
+      expect.stringContaining("profile: llm="),
+      expect.stringContaining("[ATTN] paper page budget:")
+    ]);
+  });
+
+  it("captures readiness snapshot fields for approval mode and workspace write probing", async () => {
+    const workspace = createTempWorkspace("autolabos-doctor-readiness-");
+    await seedDoctorTooling(workspace);
+    await seedDoctorWorkspace(workspace);
+    await writeFile(path.join(workspace, "ISSUES.md"), VALID_ISSUE_MARKDOWN, "utf8");
+    await writeJson(path.join(workspace, ".autolabos", "runs", "runs.json"), { runs: [] });
+    const dockerExecutable = await seedDockerInspectFixture(workspace, {
+      networkMode: "none"
+    });
+
+    const report = await withWorkspacePath(workspace, () =>
+      doctorModule.runDoctorReport(createCodexStub(), {
+        workspaceRoot: workspace,
+        includeHarnessValidation: false,
+        approvalMode: "manual",
+        executionApprovalMode: "risk_ack",
+        dependencyMode: "docker",
+        sessionMode: "existing",
+        codeExecutionExpected: true,
+        candidateIsolation: "attempt_worktree",
+        dockerExecutable,
+        dockerTarget: "runtime-container"
+      })
+    );
+
+    expect(report.readiness.approvalMode).toBe("manual");
+    expect(report.readiness.executionApprovalMode).toBe("risk_ack");
+    expect(report.readiness.dependencyMode).toBe("docker");
+    expect(report.readiness.sessionMode).toBe("existing");
+    expect(report.readiness.candidateIsolation).toBe("attempt_worktree");
+    expect(report.readiness.workspaceProbePath).toContain(workspace);
+    expect(report.checks).toContainEqual(
+      expect.objectContaining({
+        name: "workspace-write",
+        ok: true
+      })
+    );
+    expect(report.checks).toContainEqual(
+      expect.objectContaining({
+        name: "docker-execution-boundary",
+        ok: true
+      })
+    );
+    expect(report.checks).toContainEqual(
+      expect.objectContaining({
+        name: "experiment-containerization",
+        ok: true
+      })
+    );
+  });
+
+  it("blocks Docker readiness when the configured target cannot be inspected", async () => {
+    const workspace = createTempWorkspace("autolabos-doctor-docker-unavailable-");
+    await seedDoctorTooling(workspace);
+    await seedDoctorWorkspace(workspace);
+    await writeFile(path.join(workspace, "ISSUES.md"), VALID_ISSUE_MARKDOWN, "utf8");
+    await writeJson(path.join(workspace, ".autolabos", "runs", "runs.json"), { runs: [] });
+
+    const report = await withWorkspacePath(workspace, () =>
+      doctorModule.runDoctorReport(createCodexStub(), {
+        workspaceRoot: workspace,
+        includeHarnessValidation: false,
+        dependencyMode: "docker",
+        codeExecutionExpected: true,
+        dockerExecutable: path.join(workspace, "missing-docker"),
+        dockerTarget: "runtime-container"
+      })
+    );
+
+    expect(report.readiness.blocked).toBe(true);
+    expect(report.readiness.failedChecks).toEqual(expect.arrayContaining([
+      "docker-execution-boundary",
+      "experiment-containerization"
+    ]));
+    expect(report.checks).toContainEqual(
+      expect.objectContaining({
+        name: "docker-execution-boundary",
+        ok: false,
+        detail: expect.stringContaining("docker_container_inspect_failed")
+      })
+    );
+  });
+
+  it("validates an image-backed ephemeral Docker lifecycle before declaring readiness", async () => {
+    const workspace = createTempWorkspace("autolabos-doctor-docker-image-");
+    await seedDoctorTooling(workspace);
+    await seedDoctorWorkspace(workspace);
+    await writeFile(path.join(workspace, "ISSUES.md"), VALID_ISSUE_MARKDOWN, "utf8");
+    await writeJson(path.join(workspace, ".autolabos", "runs", "runs.json"), { runs: [] });
+    const dockerExecutable = await seedEphemeralDockerFixture(workspace);
+
+    const report = await withWorkspacePath(workspace, () =>
+      doctorModule.runDoctorReport(createCodexStub(), {
+        workspaceRoot: workspace,
+        includeHarnessValidation: false,
+        executionApprovalMode: "risk_ack",
+        dependencyMode: "docker",
+        codeExecutionExpected: true,
+        networkPolicy: "blocked",
+        dockerExecutable,
+        dockerImage: "research-runtime:test"
+      })
+    );
+
+    expect(report.readiness.blocked).toBe(false);
+    expect(report.checks).toContainEqual(
+      expect.objectContaining({
+        name: "docker-execution-boundary",
+        ok: true,
+        detail: expect.stringContaining("ephemeral create")
+      })
+    );
+    expect(report.checks).toContainEqual(
+      expect.objectContaining({
+        name: "experiment-containerization",
+        ok: true
+      })
+    );
+  });
+
+  it("reports an invalid Docker image reference as a failed readiness check", async () => {
+    const result = await doctorModule.runDockerExecutionBoundaryCheck({
+      workspaceRoot: "/workspace/project",
+      networkPolicy: "blocked",
+      dockerImage: "--privileged"
+    });
+
+    expect(result).toEqual(expect.objectContaining({
+      name: "docker-execution-boundary",
+      ok: false,
+      status: "fail",
+      detail: expect.stringContaining("docker_execution_image_invalid")
+    }));
+  });
+
+  it("treats local snapshot isolation plus disabled network as ready for code execution", async () => {
+    const workspace = createTempWorkspace("autolabos-doctor-local-isolation-");
+    await seedDoctorTooling(workspace);
+    await seedDoctorWorkspace(workspace);
+    await writeFile(path.join(workspace, "ISSUES.md"), VALID_ISSUE_MARKDOWN, "utf8");
+    await writeJson(path.join(workspace, ".autolabos", "runs", "runs.json"), { runs: [] });
+
+    const report = await withWorkspacePath(workspace, () =>
+      doctorModule.runDoctorReport(createCodexStub(), {
+        workspaceRoot: workspace,
+        includeHarnessValidation: false,
+        approvalMode: "manual",
+        executionApprovalMode: "manual",
+        dependencyMode: "local",
+        sessionMode: "existing",
+        codeExecutionExpected: true,
+        candidateIsolation: "attempt_snapshot_restore",
+        allowNetwork: false
+      })
+    );
+
+    expect(report.readiness.blocked).toBe(false);
+    expect(report.checks).toContainEqual(
+      expect.objectContaining({
+        name: "experiment-containerization",
+        ok: true,
+        detail: expect.stringContaining("attempt_snapshot_restore")
+      })
+    );
+    expect(report.checks).toContainEqual(
+      expect.objectContaining({
+        name: "experiment-web-restriction",
+        ok: true,
+        status: "ok",
+        detail: expect.stringContaining("no explicit network dependency is declared")
+      })
+    );
+  });
+
+  it("downgrades declared networked execution to a warning instead of a hard failure", async () => {
+    const workspace = createTempWorkspace("autolabos-doctor-network-declared-");
+    await seedDoctorTooling(workspace);
+    await seedDoctorWorkspace(workspace);
+    await writeFile(path.join(workspace, "ISSUES.md"), VALID_ISSUE_MARKDOWN, "utf8");
+    await writeJson(path.join(workspace, ".autolabos", "runs", "runs.json"), { runs: [] });
+
+    const report = await withWorkspacePath(workspace, () =>
+      doctorModule.runDoctorReport(createCodexStub(), {
+        workspaceRoot: workspace,
+        includeHarnessValidation: false,
+        approvalMode: "manual",
+        executionApprovalMode: "risk_ack",
+        dependencyMode: "local",
+        sessionMode: "fresh",
+        codeExecutionExpected: true,
+        candidateIsolation: "attempt_snapshot_restore",
+        allowNetwork: true,
+        networkPolicy: "declared",
+        networkPurpose: "logging"
+      })
+    );
+
+    expect(report.readiness.blocked).toBe(false);
+    expect(report.readiness.networkPolicy).toBe("declared");
+    expect(report.readiness.networkPurpose).toBe("logging");
+    expect(report.readiness.networkDeclarationPresent).toBe(true);
+    expect(report.readiness.warningChecks).toContain("experiment-web-restriction");
+    expect(report.checks).toContainEqual(
+      expect.objectContaining({
+        name: "experiment-web-restriction",
+        ok: true,
+        status: "warning",
+        detail: expect.stringContaining("network dependency for logging")
+      })
+    );
+    expect(doctorModule.buildDoctorHighlightLines(report)).toContain(
+      "[WARN] declared network dependency: logging. Results should remain auditable as a network-assisted run."
+    );
+  });
+
+  it("keeps required remote execution blocked without an enforced adapter while surfacing network guidance", async () => {
+    const workspace = createTempWorkspace("autolabos-doctor-network-required-");
+    await seedDoctorTooling(workspace);
+    await seedDoctorWorkspace(workspace);
+    await writeFile(path.join(workspace, "ISSUES.md"), VALID_ISSUE_MARKDOWN, "utf8");
+    await writeJson(path.join(workspace, ".autolabos", "runs", "runs.json"), { runs: [] });
+
+    const report = await withWorkspacePath(workspace, () =>
+      doctorModule.runDoctorReport(createCodexStub(), {
+        workspaceRoot: workspace,
+        includeHarnessValidation: false,
+        approvalMode: "manual",
+        executionApprovalMode: "risk_ack",
+        dependencyMode: "remote_gpu",
+        sessionMode: "fresh",
+        codeExecutionExpected: true,
+        candidateIsolation: "attempt_snapshot_restore",
+        allowNetwork: true,
+        networkPolicy: "required",
+        networkPurpose: "remote_inference"
+      })
+    );
+
+    expect(report.readiness.blocked).toBe(true);
+    expect(report.readiness.failedChecks).toContain("experiment-containerization");
+    expect(report.readiness.networkPolicy).toBe("required");
+    expect(report.readiness.networkPurpose).toBe("remote_inference");
+    expect(report.readiness.warningChecks).toContain("experiment-web-restriction");
+    expect(report.checks).toContainEqual(
+      expect.objectContaining({
+        name: "experiment-web-restriction",
+        ok: true,
+        status: "warning",
+        detail: expect.stringContaining("network-critical dependency for remote_inference")
+      })
+    );
+    expect(report.checks).toContainEqual(
+      expect.objectContaining({
+        name: "experiment-containerization",
+        ok: false,
+        detail: expect.stringContaining("no enforced execution adapter")
+      })
+    );
+    expect(doctorModule.buildDoctorHighlightLines(report)).toContain(
+      "[ATTN] required network dependency: remote_inference. Treat this run as network-assisted and keep explicit operator review in the loop."
+    );
+  });
+
+  it("treats a missing network declaration as an unlabeled local run unless explicit metadata is present", async () => {
+    const workspace = createTempWorkspace("autolabos-doctor-network-undeclared-");
+    await seedDoctorTooling(workspace);
+    await seedDoctorWorkspace(workspace);
+    await writeFile(path.join(workspace, "ISSUES.md"), VALID_ISSUE_MARKDOWN, "utf8");
+    await writeJson(path.join(workspace, ".autolabos", "runs", "runs.json"), { runs: [] });
+
+    const report = await withWorkspacePath(workspace, () =>
+      doctorModule.runDoctorReport(createCodexStub(), {
+        workspaceRoot: workspace,
+        includeHarnessValidation: false,
+        approvalMode: "manual",
+        executionApprovalMode: "manual",
+        dependencyMode: "local",
+        sessionMode: "fresh",
+        codeExecutionExpected: true,
+        candidateIsolation: "attempt_snapshot_restore",
+        allowNetwork: true
+      })
+    );
+
+    expect(report.readiness.blocked).toBe(false);
+    expect(report.readiness.networkDeclarationPresent).toBe(true);
+    expect(report.readiness.warningChecks).not.toContain("experiment-web-restriction");
+    expect(report.checks).toContainEqual(
+      expect.objectContaining({
+        name: "experiment-web-restriction",
+        ok: true,
+        status: "ok",
+        detail: expect.stringContaining("no explicit network dependency is declared")
+      })
+    );
+  });
+
+  it("fails when the workspace config is missing and exposes api-style doctor fields", async () => {
+    const workspace = createTempWorkspace("autolabos-doctor-config-missing-");
+    await seedDoctorTooling(workspace);
+    await writeFile(path.join(workspace, "ISSUES.md"), VALID_ISSUE_MARKDOWN, "utf8");
+    await mkdir(path.join(workspace, ".autolabos", "runs"), { recursive: true });
+
+    const report = await withWorkspacePath(workspace, () =>
+      doctorModule.runDoctorReport(createCodexStub(), {
+        workspaceRoot: workspace,
+        includeHarnessValidation: false
+      })
+    );
+
+    expect(report.readiness.blocked).toBe(true);
+    expect(report.readiness.failedChecks).toContain("workspace-config");
+    expect(report.checks).toContainEqual(
+      expect.objectContaining({
+        name: "workspace-config",
+        ok: false,
+        detail: "workspace not initialized – run setup first"
+      })
+    );
+    const apiChecks = report.checks.map((check) => doctorModule.mapDoctorCheckForApi(check));
+    expect(apiChecks).toContainEqual(
+      expect.objectContaining({
+        check: "workspace-config",
+        status: "fail",
+        message: "workspace not initialized – run setup first"
+      })
+    );
+    expect(doctorModule.getDoctorAggregateStatus({ checks: report.checks, harness: report.harness })).toBe("fail");
+  });
+
+  it("fails when the runs directory is not writable", async () => {
+    const workspace = createTempWorkspace("autolabos-doctor-runs-dir-write-");
+    await seedDoctorTooling(workspace);
+    await seedDoctorWorkspace(workspace);
+    await writeFile(path.join(workspace, "ISSUES.md"), VALID_ISSUE_MARKDOWN, "utf8");
+    const runsDir = path.join(workspace, ".autolabos", "runs");
+    await chmod(runsDir, 0o555);
+
+    const report = await withWorkspacePath(workspace, () =>
+      doctorModule.runDoctorReport(createCodexStub(), {
+        workspaceRoot: workspace,
+        includeHarnessValidation: false
+      })
+    );
+
+    expect(report.readiness.blocked).toBe(true);
+    expect(report.readiness.failedChecks).toContain("runs-dir-write");
+    expect(report.checks).toContainEqual(
+      expect.objectContaining({
+        name: "runs-dir-write",
+        ok: false
+      })
+    );
+  });
+
+  it("warns when disk space falls below the preflight threshold", async () => {
+    const workspace = createTempWorkspace("autolabos-doctor-disk-space-");
+    await seedDoctorTooling(workspace);
+    await seedDoctorWorkspace(workspace);
+    await writeFile(path.join(workspace, "ISSUES.md"), VALID_ISSUE_MARKDOWN, "utf8");
+    vi.spyOn(nodeFs, "statfs").mockResolvedValue({
+      bavail: BigInt(128),
+      bsize: BigInt(1024 * 1024)
+    } as any);
+
+    const report = await withWorkspacePath(workspace, () =>
+      doctorModule.runDoctorReport(createCodexStub(), {
+        workspaceRoot: workspace,
+        includeHarnessValidation: false
+      })
+    );
+
+    expect(report.readiness.blocked).toBe(false);
+    expect(report.readiness.warningChecks).toContain("disk-free-space");
+    expect(report.checks).toContainEqual(
+      expect.objectContaining({
+        name: "disk-free-space",
+        ok: true,
+        status: "warning",
+        detail: expect.stringContaining("Low disk space")
+      })
+    );
+  });
+
+  it("warns when the current Node.js version is below the supported floor", async () => {
+    const workspace = createTempWorkspace("autolabos-doctor-node-version-");
+    await seedDoctorTooling(workspace);
+    await seedDoctorWorkspace(workspace);
+    await writeFile(path.join(workspace, "ISSUES.md"), VALID_ISSUE_MARKDOWN, "utf8");
+    const originalVersions = process.versions;
+    Object.defineProperty(process, "versions", {
+      value: { ...originalVersions, node: "16.20.2" },
+      configurable: true
+    });
+
+    try {
+      const report = await withWorkspacePath(workspace, () =>
+        doctorModule.runDoctorReport(createCodexStub(), {
+          workspaceRoot: workspace,
+          includeHarnessValidation: false
+        })
+      );
+
+      expect(report.readiness.blocked).toBe(false);
+      expect(report.readiness.warningChecks).toContain("node-version");
+      expect(report.checks).toContainEqual(
+        expect.objectContaining({
+          name: "node-version",
+          ok: true,
+          status: "warning",
+          detail: expect.stringContaining("Upgrade to Node.js 18 or newer")
+        })
+      );
+    } finally {
+      Object.defineProperty(process, "versions", {
+        value: originalVersions,
+        configurable: true
+      });
+    }
+  });
+
+  it("fails readiness when a provided research brief is missing governance contract sections", async () => {
+    const workspace = createTempWorkspace("autolabos-doctor-brief-contract-missing-");
+    await seedDoctorTooling(workspace);
+    await seedDoctorWorkspace(workspace);
+    await writeFile(path.join(workspace, "ISSUES.md"), VALID_ISSUE_MARKDOWN, "utf8");
+    const briefPath = path.join(workspace, "Brief.md");
+    await writeFile(
+      briefPath,
+      [
+        "# Research Brief",
+        "",
+        "## Topic",
+        "A concrete test topic for doctor readiness.",
+        "",
+        "## Objective Metric",
+        "- Primary metric: accuracy"
+      ].join("\n"),
+      "utf8"
+    );
+
+    const report = await withWorkspacePath(workspace, () =>
+      doctorModule.runDoctorReport(createCodexStub(), {
+        workspaceRoot: workspace,
+        includeHarnessValidation: false,
+        researchBriefPath: briefPath
+      })
+    );
+
+    expect(report.readiness.blocked).toBe(true);
+    expect(report.readiness.failedChecks).toContain("research-brief-contract");
+    expect(report.readiness.researchBriefPath).toBe(briefPath);
+    expect(report.readiness.researchBriefContractReady).toBe(false);
+    expect(report.readiness.researchBriefMissingSections).toContain("Baseline / Comparator");
+    expect(report.checks).toContainEqual(
+      expect.objectContaining({
+        name: "research-brief-contract",
+        ok: false,
+        detail: expect.stringContaining("missing required section")
+      })
+    );
+  });
+
+  it("passes readiness for a provided research brief with complete governance contract sections", async () => {
+    const workspace = createTempWorkspace("autolabos-doctor-brief-contract-complete-");
+    await seedDoctorTooling(workspace);
+    await seedDoctorWorkspace(workspace);
+    await writeFile(path.join(workspace, "ISSUES.md"), VALID_ISSUE_MARKDOWN, "utf8");
+    const briefPath = path.join(workspace, "Brief.md");
+    await writeFile(briefPath, buildCompleteBriefMarkdown(), "utf8");
+
+    const report = await withWorkspacePath(workspace, () =>
+      doctorModule.runDoctorReport(createCodexStub(), {
+        workspaceRoot: workspace,
+        includeHarnessValidation: false,
+        researchBriefPath: briefPath
+      })
+    );
+
+    expect(report.readiness.blocked).toBe(false);
+    expect(report.readiness.failedChecks).not.toContain("research-brief-contract");
+    expect(report.readiness.researchBriefPath).toBe(briefPath);
+    expect(report.readiness.researchBriefContractReady).toBe(true);
+    expect(report.readiness.researchBriefMissingSections).toEqual([]);
+    expect(report.checks).toContainEqual(
+      expect.objectContaining({
+        name: "research-brief-contract",
+        ok: true
+      })
+    );
+  });
+
+  it("fails readiness when a complete brief declares an invalid research mode", async () => {
+    const workspace = createTempWorkspace("autolabos-doctor-brief-mode-invalid-");
+    await seedDoctorTooling(workspace);
+    await seedDoctorWorkspace(workspace);
+    await writeFile(path.join(workspace, "ISSUES.md"), VALID_ISSUE_MARKDOWN, "utf8");
+    const briefPath = path.join(workspace, "Brief.md");
+    const invalidBrief = buildCompleteBriefMarkdown().replace(
+      /## Research Mode\n[^\n]+/u,
+      "## Research Mode\nautomatic_selection"
+    );
+    await writeFile(briefPath, invalidBrief, "utf8");
+
+    const report = await withWorkspacePath(workspace, () =>
+      doctorModule.runDoctorReport(createCodexStub(), {
+        workspaceRoot: workspace,
+        includeHarnessValidation: false,
+        researchBriefPath: briefPath
+      })
+    );
+
+    expect(report.readiness.blocked).toBe(true);
+    expect(report.readiness.researchBriefContractReady).toBe(false);
+    expect(report.readiness.researchBriefMissingSections).toContain(
+      'Set "## Research Mode" to either "hypothesis_test" or "topic_discovery".'
+    );
+    expect(report.checks).toContainEqual(
+      expect.objectContaining({
+        name: "research-brief-contract",
+        ok: false,
+        detail: expect.stringContaining("contract is invalid")
+      })
+    );
+  });
+});
+
+function createCodexStub(): CodexNativeClient {
+  return {
+    checkCliAvailable: async () => ({ ok: true, detail: "stub cli" }),
+    checkLoginStatus: async () => ({ ok: true, detail: "stub login" }),
+    checkEnvironmentReadiness: async () => []
+  } as unknown as CodexNativeClient;
+}
+
+function createTempWorkspace(prefix: string): string {
+  const dir = mkdtempSync(path.join(os.tmpdir(), prefix));
+  tempDirs.push(dir);
+  return dir;
+}
+
+async function seedDoctorTooling(workspace: string): Promise<void> {
+  const binDir = path.join(workspace, "bin");
+  await mkdir(binDir, { recursive: true });
+  await writeExecutable(path.join(binDir, "python3"), "#!/bin/sh\nexit 0\n");
+  await writeExecutable(path.join(binDir, "pip3"), "#!/bin/sh\nexit 0\n");
+  await writeExecutable(path.join(binDir, "pdflatex"), "#!/bin/sh\nexit 0\n");
+}
+
+async function seedDoctorWorkspace(workspace: string): Promise<void> {
+  await mkdir(path.join(workspace, ".autolabos", "runs"), { recursive: true });
+  await writeFile(path.join(workspace, ".autolabos", "config.yaml"), "version: 1\n", "utf8");
+}
+
+async function seedPromotionSourceLock(
+  workspace: string,
+  runId: string,
+  token: string
+): Promise<string> {
+  const lockPath = path.join(
+    workspace,
+    ".autolabos",
+    "runs",
+    runId,
+    PROMOTION_SOURCE_LOCK_FILENAME
+  );
+  await mkdir(path.dirname(lockPath), { recursive: true });
+  await writeFile(lockPath, `${JSON.stringify({
+    token,
+    pid: process.pid,
+    acquired_at: new Date().toISOString()
+  })}\n`, "utf8");
+  return lockPath;
+}
+
+async function writeExecutable(filePath: string, content: string): Promise<void> {
+  await writeFile(filePath, content, "utf8");
+  await chmod(filePath, 0o755);
+}
+
+async function seedDockerInspectFixture(
+  workspace: string,
+  input: { networkMode: string }
+): Promise<string> {
+  const executable = path.join(workspace, "bin", "docker-fixture.cjs");
+  const inspection = [{
+    Id: "container-fixture-id",
+    Config: { User: "1000:1000" },
+    State: { Running: true, Paused: false, Restarting: false },
+    HostConfig: {
+      Privileged: false,
+      ReadonlyRootfs: true,
+      NetworkMode: input.networkMode,
+      CapDrop: ["ALL"],
+      SecurityOpt: ["no-new-privileges:true"],
+      Devices: [],
+      DeviceRequests: []
+    },
+    Mounts: [{
+      Type: "bind",
+      Source: workspace,
+      Destination: workspace,
+      RW: true
+    }]
+  }];
+  await writeExecutable(executable, [
+    `#!${process.execPath}`,
+    `if (process.argv[2] === "container" && process.argv[3] === "inspect") {`,
+    `  process.stdout.write(${JSON.stringify(JSON.stringify(inspection))});`,
+    `  process.exit(0);`,
+    `}`,
+    `process.exit(2);`,
+    ``
+  ].join("\n"));
+  return executable;
+}
+
+async function seedEphemeralDockerFixture(workspace: string): Promise<string> {
+  const executable = path.join(workspace, "bin", "docker-ephemeral-fixture.cjs");
+  const inspection = [{
+    Id: "ephemeral-container-fixture-id",
+    Config: { User: "1000:1000" },
+    State: { Running: false, Paused: false, Restarting: false },
+    HostConfig: {
+      Privileged: false,
+      ReadonlyRootfs: true,
+      NetworkMode: "none",
+      CapDrop: ["ALL"],
+      SecurityOpt: ["no-new-privileges:true"],
+      Devices: [],
+      DeviceRequests: []
+    },
+    Mounts: [{
+      Type: "bind",
+      Source: workspace,
+      Destination: workspace,
+      RW: false
+    }, {
+      Type: "bind",
+      Source: path.join(workspace, ".autolabos", "runs"),
+      Destination: path.join(workspace, ".autolabos", "runs"),
+      RW: true
+    }]
+  }];
+  await writeExecutable(executable, [
+    "#!" + process.execPath,
+    "const command = process.argv.slice(2);",
+    "if (command[0] === \"create\") { process.stdout.write(\"fixture-id\\n\"); process.exit(0); }",
+    "if (command[0] === \"container\" && command[1] === \"inspect\") {",
+    "  process.stdout.write(" + JSON.stringify(JSON.stringify(inspection)) + ");",
+    "  process.exit(0);",
+    "}",
+    "if (command[0] === \"start\" && command[1] === \"--attach\") { process.exit(0); }",
+    "if (command[0] === \"container\" && command[1] === \"rm\" && command[2] === \"--force\") { process.exit(0); }",
+    "process.exit(2);",
+    ""
+  ].join("\n"));
+  return executable;
+}
+
+async function withWorkspacePath<T>(workspace: string, fn: () => Promise<T>): Promise<T> {
+  const originalPath = process.env.PATH;
+  const binDir = path.join(workspace, "bin");
+  process.env.PATH = `${binDir}${path.delimiter}${originalPath || ""}`;
+  try {
+    return await fn();
+  } finally {
+    if (originalPath === undefined) {
+      delete process.env.PATH;
+    } else {
+      process.env.PATH = originalPath;
+    }
+  }
+}
+
+async function writeJson(filePath: string, value: unknown): Promise<void> {
+  await mkdir(path.dirname(filePath), { recursive: true });
+  await writeFile(filePath, `${JSON.stringify(value, null, 2)}\n`, "utf8");
+}
+
+function buildCompleteBriefMarkdown(): string {
+  return buildGuidedResearchBriefMarkdown({
+    topic: "A small real experiment for a governed classifier comparison.",
+    primaryMetric: "macro F1",
+    secondaryMetrics: "runtime; memory",
+    meaningfulImprovement: "Macro F1 improves by at least two points without worse runtime.",
+    constraints: "Use a small public dataset; keep execution reproducible; fixed random seed.",
+    researchQuestion: "Does the proposed preprocessing improve macro F1 over a named baseline on a small public task?",
+    whySmallExperiment: "The dataset is small; the baseline is simple; the metric is objective; the run budget is bounded.",
+    baselineComparator: "Baseline: bag-of-words logistic regression.",
+    datasetTaskBench: "Dataset: small public text classification fixture.",
+    targetComparison: "Compare baseline versus preprocessing-enhanced condition on macro F1.",
+    minimumAcceptableEvidence: "At least one executed baseline and one executed comparator with numeric macro F1.",
+    disallowedShortcuts: "No synthetic-only metrics; no paper-ready claim without executed comparator.",
+    allowedBudgetedPasses: "One design pass; one implementation repair pass; one analysis repair pass.",
+    paperCeiling: "research_memo unless baseline and comparator evidence are both present.",
+    minimumExperimentPlan: "Train baseline; train comparator; evaluate macro F1; record result table.",
+    failureConditions: "Missing baseline; missing metric; failed execution; unsupported improvement claim.",
+    notes: "Doctor test fixture.",
+    questionsRisks: "Small sample size may limit generality."
+  });
+}
+
+const VALID_ISSUE_MARKDOWN = `
+## Issue: LV-DOCTOR
+- Status: open
+- Validation target: /doctor harness summary
+- Environment/session context: test workspace
+- Reproduction steps:
+  1. Run /doctor in TUI or web.
+  2. Confirm harness summary appears.
+- Expected behavior: Doctor includes harness diagnostics.
+- Actual behavior: Under verification.
+- Fresh vs existing session comparison:
+  - Fresh session: pending
+  - Existing session: pending
+  - Divergence: none yet
+- Root cause hypothesis: n/a
+- Code/test changes: this is a test fixture entry
+- Regression status: pending
+- Follow-up risks: low
+`.trim();

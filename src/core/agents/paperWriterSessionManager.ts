@@ -1,0 +1,1569 @@
+import { AppConfig, PaperProfileConfig, RunRecord } from "../../types.js";
+import { EventStream } from "../events.js";
+import { LLMClient, LLMProgressEvent } from "../llm/client.js";
+import { RunStore } from "../runs/runStore.js";
+import { CodexNativeClient } from "../../integrations/codex/codexCliClient.js";
+import { RunContextMemory } from "../memory/runContextMemory.js";
+import {
+  buildSuggestedPaperTitle,
+  buildFallbackPaperDraft,
+  buildPaperWriterPrompt,
+  choosePaperTitle,
+  PaperDraft,
+  PaperDraftValidationIssue,
+  PaperWritingBundle,
+  parsePaperDraftJson,
+  normalizePaperDraft
+} from "../analysis/paperWriting.js";
+import {
+  buildFallbackPaperManuscript,
+  buildPaperPolishPrompt,
+  PaperManuscript,
+  parsePaperManuscriptJson,
+  normalizePaperManuscript
+} from "../analysis/paperManuscript.js";
+import {
+  buildFallbackManuscriptReview,
+  buildFallbackManuscriptReviewAudit,
+  buildManuscriptRepairPrompt,
+  buildManuscriptReviewAuditPrompt,
+  buildManuscriptReviewPrompt,
+  ManuscriptRepairPlanArtifact,
+  ManuscriptQualityIssueSnapshot,
+  ManuscriptReviewAuditArtifact,
+  ManuscriptReviewArtifact,
+  ManuscriptReviewValidationArtifact,
+  normalizeManuscriptReviewAudit,
+  parseManuscriptReviewAuditJson,
+  normalizeManuscriptReview,
+  parseManuscriptReviewJson,
+  ManuscriptStyleLintArtifact
+} from "../analysis/manuscriptQuality.js";
+import { ConstraintProfile } from "../runConstraints.js";
+import { ObjectiveMetricEvaluation, ObjectiveMetricProfile } from "../objectiveMetric.js";
+import { mapCodexEventToAutoLabOSEvents } from "../../integrations/codex/codexEventMapper.js";
+import { createPaperWriterRole } from "./roles/paperWriter.js";
+import { createReviewerRole } from "./roles/reviewer.js";
+import { writeRunArtifact } from "../nodes/helpers.js";
+
+const DEFAULT_PAPER_WRITER_STAGE_TIMEOUT_MS = 0;
+const MAX_PAPER_WRITER_PROGRESS_EVENTS_PER_STAGE = 80;
+const MAX_PAPER_WRITER_PROGRESS_LINE_CHARS = 180;
+
+interface PaperWriterOutline {
+  title: string;
+  abstract_focus: string[];
+  section_headings: string[];
+  key_claim_themes: string[];
+  citation_plan: string[];
+}
+
+interface PaperWriterReview {
+  summary: string;
+  revision_notes: string[];
+  unsupported_claims: Array<{ claim_id: string; reason: string }>;
+  missing_sections: string[];
+  missing_citations: string[];
+}
+
+interface SessionTraceEntry {
+  stage:
+    | "outline"
+    | "draft"
+    | "review"
+    | "finalize"
+    | "polish"
+    | "validation_repair"
+    | "manuscript_review"
+    | "manuscript_review_retry"
+    | "manuscript_review_audit"
+    | "manuscript_repair_1"
+    | "manuscript_repair_2";
+  mode: "codex_native" | "staged_llm";
+  threadId?: string;
+  fallbackUsed: boolean;
+  startedAt: string;
+  completedAt: string;
+  preview: string;
+  error?: string;
+}
+
+export interface PaperWriterSessionResult {
+  draft: PaperDraft;
+  manuscript: PaperManuscript;
+  source: "codex_native" | "staged_llm" | "fallback";
+  threadId?: string;
+  outline: PaperWriterOutline;
+  review: PaperWriterReview;
+  trace: SessionTraceEntry[];
+  stageFallbacks: number;
+  errors: string[];
+}
+
+export interface PaperWriterValidationRepairResult {
+  attempted: boolean;
+  applied: boolean;
+  draft: PaperDraft;
+  source: "codex_native" | "staged_llm" | "fallback";
+  threadId?: string;
+  error?: string;
+}
+
+export interface PaperWriterManuscriptReviewResult {
+  review: ManuscriptReviewArtifact;
+  rawText?: string;
+  source: "codex_native" | "staged_llm" | "fallback";
+  threadId?: string;
+  error?: string;
+}
+
+export interface PaperWriterManuscriptReviewAuditResult {
+  audit: ManuscriptReviewAuditArtifact;
+  rawText?: string;
+  source: "codex_native" | "staged_llm" | "fallback";
+  threadId?: string;
+  error?: string;
+}
+
+export interface PaperWriterManuscriptRepairResult {
+  attempted: boolean;
+  applied: boolean;
+  manuscript: PaperManuscript;
+  rawText?: string;
+  source: "codex_native" | "staged_llm" | "fallback";
+  threadId?: string;
+  error?: string;
+}
+
+interface PaperWriterSessionDeps {
+  config: AppConfig;
+  codex: CodexNativeClient;
+  llm: LLMClient;
+  eventStream: EventStream;
+  runStore: RunStore;
+  workspaceRoot: string;
+}
+
+interface PaperWriterSessionInput {
+  run: RunRecord;
+  bundle: PaperWritingBundle;
+  constraintProfile: ConstraintProfile;
+  paperProfile?: PaperProfileConfig;
+  objectiveMetricProfile: ObjectiveMetricProfile;
+  objectiveEvaluation?: ObjectiveMetricEvaluation;
+  latexTemplateSectionOrder?: string[] | null;
+  appendixKeepInMainBody?: string[] | null;
+  abortSignal?: AbortSignal;
+}
+
+export interface LatexRepairResult {
+  tex?: string;
+  threadId?: string;
+  source: "codex_native" | "staged_llm";
+  error?: string;
+}
+
+export class PaperWriterSessionManager {
+  private readonly writerRole;
+  private readonly reviewerRole;
+
+  constructor(private readonly deps: PaperWriterSessionDeps) {
+    this.writerRole = createPaperWriterRole(deps.llm);
+    this.reviewerRole = createReviewerRole(deps.llm);
+  }
+
+  async run(input: PaperWriterSessionInput): Promise<PaperWriterSessionResult> {
+    const runContext = new RunContextMemory(input.run.memoryRefs.runContextPath);
+    let activeThreadId =
+      input.run.nodeThreads.write_paper ||
+      (await runContext.get<string>("write_paper.thread_id"));
+    const useCodexSession = !hasStructuredLlmClient(this.deps.llm);
+    const mode: "codex_native" | "staged_llm" = useCodexSession ? "codex_native" : "staged_llm";
+    const trace: SessionTraceEntry[] = [];
+    const errors: string[] = [];
+    let stageFallbacks = 0;
+    const writerSystemPrompt = buildRoleSystemPrompt(
+      "paper_writer",
+      this.writerRole.sop,
+      input.latexTemplateSectionOrder
+    );
+    const reviewerSystemPrompt = buildRoleSystemPrompt(
+      "reviewer",
+      this.reviewerRole.sop,
+      input.latexTemplateSectionOrder
+    );
+
+    this.emit(input.run, `Paper writer session starting in ${mode} mode.`);
+
+    let outline = buildFallbackOutline(input.bundle);
+    const outlineStage = await this.runStage({
+      run: input.run,
+      runContext,
+      stage: "outline",
+      mode,
+      threadId: activeThreadId,
+      systemPrompt: writerSystemPrompt,
+      prompt: buildOutlinePrompt(input.bundle, input.paperProfile, input.appendixKeepInMainBody),
+      agentRole: "paper_writer",
+      abortSignal: input.abortSignal,
+      trace
+    });
+    activeThreadId = outlineStage.threadId || activeThreadId;
+    if (outlineStage.text) {
+      try {
+        outline = normalizeOutline(parseJsonObject(outlineStage.text), input.bundle);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        errors.push(`outline: ${message}`);
+        stageFallbacks += 1;
+        this.attachTraceError(trace, "outline", message);
+      }
+    } else {
+      stageFallbacks += 1;
+    }
+    await this.persistStageArtifacts(input.run, "outline", outline, outlineStage.text);
+
+    let draft = buildFallbackPaperDraft(input.bundle);
+    const draftStage = await this.runStage({
+      run: input.run,
+      runContext,
+      stage: "draft",
+      mode,
+      threadId: activeThreadId,
+      systemPrompt: writerSystemPrompt,
+      prompt: buildDraftPrompt({
+        bundle: input.bundle,
+        constraintProfile: input.constraintProfile,
+        paperProfile: input.paperProfile,
+        objectiveMetricProfile: input.objectiveMetricProfile,
+        objectiveEvaluation: input.objectiveEvaluation,
+        outline
+      }),
+      agentRole: "paper_writer",
+      abortSignal: input.abortSignal,
+      trace
+    });
+    activeThreadId = draftStage.threadId || activeThreadId;
+    if (draftStage.text) {
+      try {
+        draft = normalizePaperDraft({
+          raw: parsePaperDraftJson(draftStage.text),
+          bundle: input.bundle
+        });
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        errors.push(`draft: ${message}`);
+        stageFallbacks += 1;
+        this.attachTraceError(trace, "draft", message);
+      }
+    } else {
+      stageFallbacks += 1;
+    }
+    await this.persistStageArtifacts(input.run, "draft", draft, draftStage.text);
+
+    let review = buildFallbackReview(draft);
+    const reviewStage = await this.runStage({
+      run: input.run,
+      runContext,
+      stage: "review",
+      mode,
+      threadId: activeThreadId,
+      systemPrompt: reviewerSystemPrompt,
+      prompt: buildReviewPrompt({
+        bundle: input.bundle,
+        draft,
+        outline
+      }),
+      agentRole: "reviewer",
+      abortSignal: input.abortSignal,
+      trace
+    });
+    activeThreadId = reviewStage.threadId || activeThreadId;
+    if (reviewStage.text) {
+      try {
+        review = normalizeReview(parseJsonObject(reviewStage.text), draft);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        errors.push(`review: ${message}`);
+        stageFallbacks += 1;
+        this.attachTraceError(trace, "review", message);
+      }
+    } else {
+      stageFallbacks += 1;
+    }
+    await this.persistStageArtifacts(input.run, "review", review, reviewStage.text);
+
+    let finalDraft = draft;
+    const finalStage = await this.runStage({
+      run: input.run,
+      runContext,
+      stage: "finalize",
+      mode,
+      threadId: activeThreadId,
+      systemPrompt: writerSystemPrompt,
+      prompt: buildRevisionPrompt({
+        bundle: input.bundle,
+        constraintProfile: input.constraintProfile,
+        paperProfile: input.paperProfile,
+        objectiveMetricProfile: input.objectiveMetricProfile,
+        objectiveEvaluation: input.objectiveEvaluation,
+        outline,
+        draft,
+        review
+      }),
+      agentRole: "paper_writer",
+      abortSignal: input.abortSignal,
+      trace
+    });
+    activeThreadId = finalStage.threadId || activeThreadId;
+    if (finalStage.text) {
+      try {
+        finalDraft = normalizePaperDraft({
+          raw: parsePaperDraftJson(finalStage.text),
+          bundle: input.bundle
+        });
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        errors.push(`finalize: ${message}`);
+        stageFallbacks += 1;
+        this.attachTraceError(trace, "finalize", message);
+      }
+    } else {
+      stageFallbacks += 1;
+    }
+    await this.persistStageArtifacts(input.run, "finalize", finalDraft, finalStage.text);
+
+    let manuscript = buildFallbackPaperManuscript({
+      draft: finalDraft,
+      resultAnalysis: input.bundle.resultAnalysis,
+      objectiveEvaluation: input.objectiveEvaluation,
+      objectiveMetricProfile: input.objectiveMetricProfile,
+      experimentPlan: input.bundle.experimentPlan
+    });
+    const polishStage = await this.runStage({
+      run: input.run,
+      runContext,
+      stage: "polish",
+      mode,
+      threadId: activeThreadId,
+      systemPrompt: writerSystemPrompt,
+      prompt: buildPaperPolishPrompt({
+        bundle: input.bundle,
+        draft: finalDraft,
+        constraintProfile: input.constraintProfile,
+        paperProfile: input.paperProfile,
+        objectiveMetricProfile: input.objectiveMetricProfile,
+        objectiveEvaluation: input.objectiveEvaluation
+      }),
+      agentRole: "paper_writer",
+      abortSignal: input.abortSignal,
+      trace
+    });
+    activeThreadId = polishStage.threadId || activeThreadId;
+    if (polishStage.text) {
+      try {
+        manuscript = normalizePaperManuscript({
+          raw: parsePaperManuscriptJson(polishStage.text),
+          draft: finalDraft,
+          runTitle: input.bundle.runTitle,
+          resultAnalysis: input.bundle.resultAnalysis,
+          objectiveEvaluation: input.objectiveEvaluation,
+          objectiveMetricProfile: input.objectiveMetricProfile,
+          experimentPlan: input.bundle.experimentPlan
+        });
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        errors.push(`polish: ${message}`);
+        stageFallbacks += 1;
+        this.attachTraceError(trace, "polish", message);
+      }
+    } else {
+      stageFallbacks += 1;
+    }
+    await this.persistPolishArtifacts(input.run, manuscript, polishStage.text);
+
+    await writeRunArtifact(input.run, "paper/session_trace.json", `${JSON.stringify(trace, null, 2)}\n`);
+    await runContext.put("write_paper.thread_id", activeThreadId || null);
+    await runContext.put("write_paper.session_outline", outline);
+    await runContext.put("write_paper.session_review", review);
+    await runContext.put("write_paper.session_manuscript", manuscript);
+    await runContext.put("write_paper.session_trace", trace);
+    await runContext.put("write_paper.session_errors", errors);
+    await runContext.put("write_paper.stage_fallbacks", stageFallbacks);
+    await this.persistThreadToRunStore(input.run, activeThreadId);
+
+    this.emit(
+      input.run,
+      `Paper writer session completed with ${stageFallbacks} stage fallback(s).`
+    );
+
+    return {
+      draft: finalDraft,
+      manuscript,
+      source:
+        mode === "codex_native"
+          ? "codex_native"
+          : stageFallbacks < 5
+            ? "staged_llm"
+            : "fallback",
+      threadId: activeThreadId,
+      outline,
+      review,
+      trace,
+      stageFallbacks,
+      errors
+    };
+  }
+
+  async repairLatex(input: {
+    run: RunRecord;
+    tex: string;
+    buildLog: string;
+    abortSignal?: AbortSignal;
+  }): Promise<LatexRepairResult> {
+    const runContext = new RunContextMemory(input.run.memoryRefs.runContextPath);
+    let activeThreadId =
+      input.run.nodeThreads.write_paper ||
+      (await runContext.get<string>("write_paper.thread_id"));
+    const useCodexSession = !hasStructuredLlmClient(this.deps.llm);
+    const mode: "codex_native" | "staged_llm" = useCodexSession ? "codex_native" : "staged_llm";
+
+    this.emit(input.run, `Paper writer LaTeX repair started in ${mode} mode.`);
+
+    try {
+      let text = "";
+      if (mode === "codex_native") {
+        const result = await this.deps.codex.runTurnStream({
+          prompt: buildLatexRepairPrompt(input.tex, input.buildLog),
+          threadId: activeThreadId,
+          agentId: `paper_writer:${input.run.id}`,
+          systemPrompt: buildLatexRepairSystemPrompt(this.writerRole.sop),
+          sandboxMode: "read-only",
+          approvalPolicy: "never",
+          workingDirectory: this.deps.workspaceRoot,
+          abortSignal: input.abortSignal,
+          onEvent: (event) => {
+            const mapped = mapCodexEventToAutoLabOSEvents({
+              event,
+              runId: input.run.id,
+              node: "write_paper",
+              agentRole: "paper_writer",
+              workspaceRoot: this.deps.workspaceRoot
+            });
+            for (const item of mapped) {
+              this.deps.eventStream.emit(item);
+            }
+          }
+        });
+        text = result.finalText;
+        activeThreadId = result.threadId || activeThreadId;
+      } else {
+        const progress = createBoundedPaperWriterProgressEmitter({
+          run: input.run,
+          stage: "latex_repair",
+          emit: (run, text) => this.emit(run, text)
+        });
+        const completion = await this.deps.llm.complete(buildLatexRepairPrompt(input.tex, input.buildLog), {
+          systemPrompt: buildLatexRepairSystemPrompt(this.writerRole.sop),
+          abortSignal: input.abortSignal,
+          onProgress: progress.onProgress
+        });
+        progress.flush();
+        text = completion.text;
+      }
+
+      const repairedTex = extractLatexResponse(text);
+      await writeRunArtifact(input.run, "paper/latex_repair.raw.txt", `${text}\n`);
+      await writeRunArtifact(input.run, "paper/latex_repair.tex", repairedTex);
+      await runContext.put("write_paper.thread_id", activeThreadId || null);
+      await runContext.put("write_paper.latex_repair_preview", previewText(repairedTex));
+      await this.persistThreadToRunStore(input.run, activeThreadId);
+      this.emit(input.run, "Paper writer LaTeX repair completed.");
+      return {
+        tex: repairedTex,
+        threadId: activeThreadId,
+        source: mode
+      };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      await writeRunArtifact(input.run, "paper/latex_repair.raw.txt", `${message}\n`);
+      this.emit(input.run, `Paper writer LaTeX repair failed: ${message}`);
+      return {
+        threadId: activeThreadId,
+        source: mode,
+        error: message
+      };
+    }
+  }
+
+  async reviewManuscript(input: {
+    run: RunRecord;
+    manuscript: PaperManuscript;
+    bundle: PaperWritingBundle;
+    constraintProfile: ConstraintProfile;
+    paperProfile?: PaperProfileConfig;
+    objectiveMetricProfile: ObjectiveMetricProfile;
+    objectiveEvaluation?: ObjectiveMetricEvaluation;
+    traceability?: Parameters<typeof buildManuscriptReviewPrompt>[0]["traceability"];
+    citationKeysByPaperId?: Parameters<typeof buildManuscriptReviewPrompt>[0]["citationKeysByPaperId"];
+    stage?: "manuscript_review" | "manuscript_review_retry";
+    passLabel?: string;
+    previousReview?: ManuscriptReviewArtifact;
+    reviewValidation?: ManuscriptReviewValidationArtifact;
+    reviewAudit?: ManuscriptReviewAuditArtifact;
+    repairPlan?: Parameters<typeof buildManuscriptReviewPrompt>[0]["repairPlan"];
+    repairVerification?: Parameters<typeof buildManuscriptReviewPrompt>[0]["repairVerification"];
+    focusLocationKeys?: string[];
+    abortSignal?: AbortSignal;
+  }): Promise<PaperWriterManuscriptReviewResult> {
+    const runContext = new RunContextMemory(input.run.memoryRefs.runContextPath);
+    let activeThreadId =
+      input.run.nodeThreads.write_paper ||
+      (await runContext.get<string>("write_paper.thread_id"));
+    const useCodexSession = !hasStructuredLlmClient(this.deps.llm);
+    const mode: "codex_native" | "staged_llm" = useCodexSession ? "codex_native" : "staged_llm";
+    const trace = (await runContext.get<SessionTraceEntry[]>("write_paper.session_trace")) || [];
+
+    this.emit(
+      input.run,
+      `Manuscript review started in ${mode} mode${input.passLabel ? ` (${input.passLabel})` : ""}.`
+    );
+
+    try {
+      const reviewStageName = input.stage || "manuscript_review";
+      const reviewStage = await this.runStage({
+        run: input.run,
+        runContext,
+        stage: reviewStageName,
+        mode,
+        threadId: activeThreadId,
+        systemPrompt: buildRoleSystemPrompt("reviewer", this.reviewerRole.sop),
+        prompt: buildManuscriptReviewPrompt({
+          manuscript: input.manuscript,
+          bundle: input.bundle,
+          constraintProfile: input.constraintProfile,
+          paperProfile: input.paperProfile,
+          objectiveMetricProfile: input.objectiveMetricProfile,
+          objectiveEvaluation: input.objectiveEvaluation,
+          traceability: input.traceability,
+          citationKeysByPaperId: input.citationKeysByPaperId,
+          passLabel: input.passLabel,
+          previousReview: input.previousReview,
+          reviewValidation: input.reviewValidation,
+          reviewAudit: input.reviewAudit,
+          repairPlan: input.repairPlan,
+          repairVerification: input.repairVerification,
+          focusLocationKeys: input.focusLocationKeys
+        }),
+        agentRole: "reviewer",
+        abortSignal: input.abortSignal,
+        trace
+      });
+      activeThreadId = reviewStage.threadId || activeThreadId;
+      const review = reviewStage.text
+        ? normalizeManuscriptReview(parseManuscriptReviewJson(reviewStage.text), input.manuscript)
+        : buildFallbackManuscriptReview(input.manuscript);
+      await writeRunArtifact(input.run, "paper/session_trace.json", `${JSON.stringify(trace, null, 2)}\n`);
+      await runContext.put("write_paper.thread_id", activeThreadId || null);
+      await runContext.put("write_paper.session_trace", trace);
+      await runContext.put("write_paper.session_manuscript_review", review);
+      await this.persistThreadToRunStore(input.run, activeThreadId);
+      this.emit(input.run, "Manuscript review completed.");
+      return {
+        review,
+        rawText: reviewStage.text,
+        source: mode,
+        threadId: activeThreadId
+      };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      this.emit(input.run, `Manuscript review failed: ${message}`);
+      return {
+        review: buildFallbackManuscriptReview(input.manuscript),
+        source: "fallback",
+        threadId: activeThreadId,
+        error: message
+      };
+    }
+  }
+
+  async auditManuscriptReview(input: {
+    run: RunRecord;
+    manuscript: PaperManuscript;
+    review: ManuscriptReviewArtifact;
+    validation: ManuscriptReviewValidationArtifact;
+    lint: ManuscriptStyleLintArtifact;
+    traceability: Parameters<typeof buildManuscriptReviewAuditPrompt>[0]["traceability"];
+    citationKeysByPaperId?: Parameters<typeof buildManuscriptReviewAuditPrompt>[0]["citationKeysByPaperId"];
+    passLabel?: string;
+    abortSignal?: AbortSignal;
+  }): Promise<PaperWriterManuscriptReviewAuditResult> {
+    const runContext = new RunContextMemory(input.run.memoryRefs.runContextPath);
+    let activeThreadId =
+      input.run.nodeThreads.write_paper ||
+      (await runContext.get<string>("write_paper.thread_id"));
+    const useCodexSession = !hasStructuredLlmClient(this.deps.llm);
+    const mode: "codex_native" | "staged_llm" = useCodexSession ? "codex_native" : "staged_llm";
+    const trace = (await runContext.get<SessionTraceEntry[]>("write_paper.session_trace")) || [];
+
+    this.emit(
+      input.run,
+      `Manuscript review audit started in ${mode} mode${input.passLabel ? ` (${input.passLabel})` : ""}.`
+    );
+
+    try {
+      const auditStage = await this.runStage({
+        run: input.run,
+        runContext,
+        stage: "manuscript_review_audit",
+        mode,
+        threadId: activeThreadId,
+        systemPrompt: buildRoleSystemPrompt("reviewer", this.reviewerRole.sop),
+        prompt: buildManuscriptReviewAuditPrompt({
+          manuscript: input.manuscript,
+          review: input.review,
+          validation: input.validation,
+          lint: input.lint,
+          traceability: input.traceability,
+          citationKeysByPaperId: input.citationKeysByPaperId,
+          passLabel: input.passLabel
+        }),
+        agentRole: "reviewer",
+        abortSignal: input.abortSignal,
+        trace
+      });
+      activeThreadId = auditStage.threadId || activeThreadId;
+      const audit = auditStage.text
+        ? normalizeManuscriptReviewAudit(
+            parseManuscriptReviewAuditJson(auditStage.text),
+            input.review,
+            input.validation
+          )
+        : buildFallbackManuscriptReviewAudit(input.review, input.validation);
+      await writeRunArtifact(input.run, "paper/session_trace.json", `${JSON.stringify(trace, null, 2)}\n`);
+      await runContext.put("write_paper.thread_id", activeThreadId || null);
+      await runContext.put("write_paper.session_trace", trace);
+      await runContext.put("write_paper.session_manuscript_review_audit", audit);
+      await this.persistThreadToRunStore(input.run, activeThreadId);
+      this.emit(input.run, "Manuscript review audit completed.");
+      return {
+        audit,
+        rawText: auditStage.text,
+        source: mode,
+        threadId: activeThreadId
+      };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      this.emit(input.run, `Manuscript review audit failed: ${message}`);
+      return {
+        audit: buildFallbackManuscriptReviewAudit(input.review, input.validation),
+        source: "fallback",
+        threadId: activeThreadId,
+        error: message
+      };
+    }
+  }
+
+  async repairManuscript(input: {
+    run: RunRecord;
+    passIndex: 1 | 2;
+    manuscript: PaperManuscript;
+    draft: PaperDraft;
+    bundle: PaperWritingBundle;
+    review: ManuscriptReviewArtifact;
+    lint: ManuscriptStyleLintArtifact;
+    repairPlan: ManuscriptRepairPlanArtifact;
+    objectiveEvaluation?: ObjectiveMetricEvaluation;
+    objectiveMetricProfile?: ObjectiveMetricProfile;
+    remainingAllowedRepairs: number;
+    mustImproveIssues: ManuscriptQualityIssueSnapshot[];
+    abortSignal?: AbortSignal;
+  }): Promise<PaperWriterManuscriptRepairResult> {
+    const runContext = new RunContextMemory(input.run.memoryRefs.runContextPath);
+    let activeThreadId =
+      input.run.nodeThreads.write_paper ||
+      (await runContext.get<string>("write_paper.thread_id"));
+    const useCodexSession = !hasStructuredLlmClient(this.deps.llm);
+    const mode: "codex_native" | "staged_llm" = useCodexSession ? "codex_native" : "staged_llm";
+    const trace = (await runContext.get<SessionTraceEntry[]>("write_paper.session_trace")) || [];
+    const stage = input.passIndex === 1 ? "manuscript_repair_1" : "manuscript_repair_2";
+
+    this.emit(input.run, `Manuscript repair ${input.passIndex} started in ${mode} mode.`);
+
+    try {
+      const repairStage = await this.runStage({
+        run: input.run,
+        runContext,
+        stage,
+        mode,
+        threadId: activeThreadId,
+        systemPrompt: buildRoleSystemPrompt("paper_writer", this.writerRole.sop),
+        prompt: buildManuscriptRepairPrompt({
+          manuscript: input.manuscript,
+          review: input.review,
+          lint: input.lint,
+          repairPlan: input.repairPlan,
+          passIndex: input.passIndex,
+          remainingAllowedRepairs: input.remainingAllowedRepairs,
+          mustImproveIssues: input.mustImproveIssues
+        }),
+        agentRole: "paper_writer",
+        abortSignal: input.abortSignal,
+        trace
+      });
+      activeThreadId = repairStage.threadId || activeThreadId;
+      const manuscript = repairStage.text
+        ? normalizePaperManuscript({
+            raw: parsePaperManuscriptJson(repairStage.text),
+            draft: input.draft,
+            runTitle: input.bundle.runTitle,
+            resultAnalysis: input.bundle.resultAnalysis,
+            objectiveEvaluation: input.objectiveEvaluation,
+            objectiveMetricProfile: input.objectiveMetricProfile,
+            experimentPlan: input.bundle.experimentPlan,
+            fallbackManuscript: input.manuscript
+          })
+        : input.manuscript;
+      await writeRunArtifact(input.run, "paper/session_trace.json", `${JSON.stringify(trace, null, 2)}\n`);
+      await runContext.put("write_paper.thread_id", activeThreadId || null);
+      await runContext.put("write_paper.session_trace", trace);
+      await runContext.put(`write_paper.manuscript_repair_${input.passIndex}`, {
+        applied: true,
+        source: mode
+      });
+      await this.persistThreadToRunStore(input.run, activeThreadId);
+      this.emit(input.run, `Manuscript repair ${input.passIndex} completed.`);
+      return {
+        attempted: true,
+        applied: true,
+        manuscript,
+        rawText: repairStage.text,
+        source: mode,
+        threadId: activeThreadId
+      };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      this.emit(input.run, `Manuscript repair ${input.passIndex} failed: ${message}`);
+      return {
+        attempted: true,
+        applied: false,
+        manuscript: input.manuscript,
+        source: "fallback",
+        threadId: activeThreadId,
+        error: message
+      };
+    }
+  }
+
+  async reviseAfterValidation(input: {
+    run: RunRecord;
+    bundle: PaperWritingBundle;
+    constraintProfile: ConstraintProfile;
+    paperProfile?: PaperProfileConfig;
+    objectiveMetricProfile: ObjectiveMetricProfile;
+    objectiveEvaluation?: ObjectiveMetricEvaluation;
+    outline: PaperWriterOutline;
+    draft: PaperDraft;
+    review: PaperWriterReview;
+    validationIssues: PaperDraftValidationIssue[];
+    abortSignal?: AbortSignal;
+  }): Promise<PaperWriterValidationRepairResult> {
+    const runContext = new RunContextMemory(input.run.memoryRefs.runContextPath);
+    let activeThreadId =
+      input.run.nodeThreads.write_paper ||
+      (await runContext.get<string>("write_paper.thread_id"));
+    const useCodexSession = !hasStructuredLlmClient(this.deps.llm);
+    const mode: "codex_native" | "staged_llm" = useCodexSession ? "codex_native" : "staged_llm";
+    const trace = (await runContext.get<SessionTraceEntry[]>("write_paper.session_trace")) || [];
+
+    if (input.validationIssues.length === 0) {
+      return {
+        attempted: false,
+        applied: false,
+        draft: input.draft,
+        source: mode
+      };
+    }
+
+    this.emit(
+      input.run,
+      `Paper writer validation repair started in ${mode} mode for ${input.validationIssues.length} warning(s).`
+    );
+
+    try {
+      const mergedReview = mergeReviewWithValidationIssues(input.review, input.validationIssues);
+      const repairStage = await this.runStage({
+        run: input.run,
+        runContext,
+        stage: "validation_repair",
+        mode,
+        threadId: activeThreadId,
+        systemPrompt: buildRoleSystemPrompt("paper_writer", this.writerRole.sop),
+        prompt: buildRevisionPrompt({
+          bundle: input.bundle,
+          constraintProfile: input.constraintProfile,
+          paperProfile: input.paperProfile,
+          objectiveMetricProfile: input.objectiveMetricProfile,
+          objectiveEvaluation: input.objectiveEvaluation,
+          outline: input.outline,
+          draft: input.draft,
+          review: mergedReview,
+          validationIssues: input.validationIssues
+        }),
+        agentRole: "paper_writer",
+        abortSignal: input.abortSignal,
+        trace
+      });
+      activeThreadId = repairStage.threadId || activeThreadId;
+      const repairedDraft = repairStage.text
+        ? normalizePaperDraft({
+            raw: parsePaperDraftJson(repairStage.text),
+            bundle: input.bundle
+          })
+        : input.draft;
+      await this.persistStageArtifacts(
+        input.run,
+        "validation_repair",
+        repairedDraft,
+        repairStage.text
+      );
+      await writeRunArtifact(input.run, "paper/session_trace.json", `${JSON.stringify(trace, null, 2)}\n`);
+      await runContext.put("write_paper.thread_id", activeThreadId || null);
+      await runContext.put("write_paper.session_trace", trace);
+      await this.persistThreadToRunStore(input.run, activeThreadId);
+      this.emit(input.run, "Paper writer validation repair completed.");
+      return {
+        attempted: true,
+        applied: true,
+        draft: repairedDraft,
+        source: mode,
+        threadId: activeThreadId
+      };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      await writeRunArtifact(input.run, "paper/validation_repair.raw.txt", `${message}\n`);
+      this.emit(input.run, `Paper writer validation repair failed: ${message}`);
+      return {
+        attempted: true,
+        applied: false,
+        draft: input.draft,
+        source: "fallback",
+        threadId: activeThreadId,
+        error: message
+      };
+    }
+  }
+
+  private async runStage(input: {
+    run: RunRecord;
+    runContext: RunContextMemory;
+    stage:
+      | "outline"
+      | "draft"
+      | "review"
+      | "finalize"
+      | "polish"
+      | "validation_repair"
+      | "manuscript_review"
+      | "manuscript_review_retry"
+      | "manuscript_review_audit"
+      | "manuscript_repair_1"
+      | "manuscript_repair_2";
+    mode: "codex_native" | "staged_llm";
+    threadId?: string;
+    systemPrompt: string;
+    prompt: string;
+    agentRole: "paper_writer" | "reviewer";
+    abortSignal?: AbortSignal;
+    trace?: SessionTraceEntry[];
+  }): Promise<{ text: string; threadId?: string }> {
+    const startedAt = new Date().toISOString();
+    this.emit(input.run, `Paper writer stage "${input.stage}" started.`);
+
+    if (input.mode === "codex_native") {
+      const timeoutMs = resolvePaperWriterStageTimeoutMs();
+      const controller = new AbortController();
+      const cleanupAbort = forwardAbort(input.abortSignal, controller);
+      let timedOut = false;
+      const runPromise = this.deps.codex.runTurnStream({
+        prompt: input.prompt,
+        threadId: input.threadId,
+        agentId: `${input.agentRole}:${input.run.id}`,
+        systemPrompt: input.systemPrompt,
+        sandboxMode: "read-only",
+        approvalPolicy: "never",
+        workingDirectory: this.deps.workspaceRoot,
+        abortSignal: controller.signal,
+        onEvent: (event) => {
+          const mapped = mapCodexEventToAutoLabOSEvents({
+            event,
+            runId: input.run.id,
+            node: "write_paper",
+            agentRole: input.agentRole,
+            workspaceRoot: this.deps.workspaceRoot
+          });
+          for (const item of mapped) {
+            this.deps.eventStream.emit(item);
+          }
+        }
+      });
+      const timeoutPromise = timeoutMs > 0
+        ? new Promise<never>((_, reject) => {
+            const timer = setTimeout(() => {
+              timedOut = true;
+              const message = `Paper writer stage "${input.stage}" exceeded the ${timeoutMs}ms timeout`;
+              controller.abort(new Error(message));
+              reject(new Error(message));
+            }, timeoutMs);
+            controller.signal.addEventListener("abort", () => clearTimeout(timer), { once: true });
+          })
+        : undefined;
+      try {
+        const result = timeoutPromise ? await Promise.race([runPromise, timeoutPromise]) : await runPromise;
+        const completedAt = new Date().toISOString();
+        input.trace?.push({
+          stage: input.stage,
+          mode: input.mode,
+          threadId: result.threadId || input.threadId,
+          fallbackUsed: false,
+          startedAt,
+          completedAt,
+          preview: previewText(result.finalText)
+        });
+        this.emit(input.run, `Paper writer stage "${input.stage}" completed.`);
+        return {
+          text: result.finalText,
+          threadId: result.threadId || input.threadId
+        };
+      } catch (error) {
+        if (timedOut && !input.abortSignal?.aborted) {
+          const message = error instanceof Error ? error.message : String(error);
+          const completedAt = new Date().toISOString();
+          input.trace?.push({
+            stage: input.stage,
+            mode: input.mode,
+            threadId: input.threadId,
+            fallbackUsed: true,
+            startedAt,
+            completedAt,
+            preview: "",
+            error: message
+          });
+          this.emit(input.run, `${message}. Falling back to staged defaults for this stage.`);
+          void runPromise.catch(() => {});
+          return {
+            text: "",
+            threadId: input.threadId
+          };
+        }
+        throw error;
+      } finally {
+        cleanupAbort();
+      }
+    }
+
+    const timeoutMs = resolvePaperWriterStageTimeoutMs();
+    const controller = new AbortController();
+    const cleanupAbort = forwardAbort(input.abortSignal, controller);
+    let timedOut = false;
+    try {
+      const progress = createBoundedPaperWriterProgressEmitter({
+        run: input.run,
+        stage: input.stage,
+        emit: (run, text) => this.emit(run, text)
+      });
+      const completionPromise = this.deps.llm.complete(input.prompt, {
+        systemPrompt: input.systemPrompt,
+        abortSignal: controller.signal,
+        onProgress: progress.onProgress
+      });
+      const timeoutPromise = timeoutMs > 0
+        ? new Promise<never>((_, reject) => {
+            const timer = setTimeout(() => {
+              timedOut = true;
+              const message = `Paper writer stage "${input.stage}" exceeded the ${timeoutMs}ms timeout`;
+              controller.abort(new Error(message));
+              reject(new Error(message));
+            }, timeoutMs);
+            controller.signal.addEventListener("abort", () => clearTimeout(timer), { once: true });
+          })
+        : undefined;
+      const completion = timeoutPromise
+        ? await Promise.race([completionPromise, timeoutPromise])
+        : await completionPromise;
+      progress.flush();
+      const completedAt = new Date().toISOString();
+      input.trace?.push({
+        stage: input.stage,
+        mode: input.mode,
+        threadId: input.threadId,
+        fallbackUsed: false,
+        startedAt,
+        completedAt,
+        preview: previewText(completion.text)
+      });
+      this.emit(input.run, `Paper writer stage "${input.stage}" completed.`);
+      return {
+        text: completion.text,
+        threadId: input.threadId
+      };
+    } catch (error) {
+      if (timedOut && !input.abortSignal?.aborted) {
+        const message = error instanceof Error ? error.message : String(error);
+        const completedAt = new Date().toISOString();
+        input.trace?.push({
+          stage: input.stage,
+          mode: input.mode,
+          threadId: input.threadId,
+          fallbackUsed: true,
+          startedAt,
+          completedAt,
+          preview: "",
+          error: message
+        });
+        this.emit(input.run, `${message}. Falling back to staged defaults for this stage.`);
+        return {
+          text: "",
+          threadId: input.threadId
+        };
+      }
+      if (input.abortSignal?.aborted) {
+        throw error;
+      }
+      const message = error instanceof Error ? error.message : String(error);
+      const completedAt = new Date().toISOString();
+      input.trace?.push({
+        stage: input.stage,
+        mode: input.mode,
+        threadId: input.threadId,
+        fallbackUsed: true,
+        startedAt,
+        completedAt,
+        preview: "",
+        error: message
+      });
+      this.emit(
+        input.run,
+        `Paper writer stage "${input.stage}" failed in staged_llm mode: ${message}. Falling back to staged defaults for this stage.`
+      );
+      return {
+        text: "",
+        threadId: input.threadId
+      };
+    } finally {
+      cleanupAbort();
+    }
+  }
+
+  private async persistStageArtifacts(
+    run: RunRecord,
+    stage: "outline" | "draft" | "review" | "finalize" | "validation_repair",
+    parsed: unknown,
+    rawText: string
+  ): Promise<void> {
+    await writeRunArtifact(run, `paper/${stage}.json`, `${JSON.stringify(parsed, null, 2)}\n`);
+    await writeRunArtifact(run, `paper/${stage}.raw.txt`, `${rawText || ""}\n`);
+  }
+
+  private async persistPolishArtifacts(
+    run: RunRecord,
+    manuscript: PaperManuscript,
+    rawText: string
+  ): Promise<void> {
+    await writeRunArtifact(run, "paper/manuscript.session.json", `${JSON.stringify(manuscript, null, 2)}\n`);
+    await writeRunArtifact(run, "paper/polish.raw.txt", `${rawText || ""}\n`);
+  }
+
+  private async persistThreadToRunStore(run: RunRecord, threadId: string | undefined): Promise<void> {
+    if (!threadId) {
+      return;
+    }
+    if (
+      typeof this.deps.runStore?.getRun !== "function" ||
+      typeof this.deps.runStore?.updateRun !== "function"
+    ) {
+      return;
+    }
+    const latestRun = (await this.deps.runStore.getRun(run.id)) || run;
+    if (latestRun.nodeThreads.write_paper === threadId) {
+      return;
+    }
+    latestRun.nodeThreads.write_paper = threadId;
+    await this.deps.runStore.updateRun(latestRun);
+  }
+
+  private attachTraceError(
+    trace: SessionTraceEntry[],
+    stage: SessionTraceEntry["stage"],
+    error: string
+  ): void {
+    const entry = [...trace].reverse().find((item) => item.stage === stage);
+    if (entry) {
+      entry.fallbackUsed = true;
+      entry.error = error;
+    }
+  }
+
+  private emit(run: RunRecord, text: string): void {
+    this.deps.eventStream.emit({
+      type: "OBS_RECEIVED",
+      runId: run.id,
+      node: "write_paper",
+      payload: { text }
+    });
+  }
+}
+
+function resolvePaperWriterStageTimeoutMs(): number {
+  const raw = Number.parseInt(process.env.AUTOLABOS_PAPER_WRITER_STAGE_TIMEOUT_MS || "", 10);
+  return Number.isFinite(raw) && raw > 0 ? raw : DEFAULT_PAPER_WRITER_STAGE_TIMEOUT_MS;
+}
+
+function createBoundedPaperWriterProgressEmitter(input: {
+  run: RunRecord;
+  stage: string;
+  emit: (run: RunRecord, text: string) => void;
+}): { onProgress: (event: LLMProgressEvent) => void; flush: () => void } {
+  let emittedDeltaCount = 0;
+  let suppressedDeltaCount = 0;
+  let suppressionNoticeEmitted = false;
+
+  const flush = () => {
+    if (suppressedDeltaCount <= 0) {
+      return;
+    }
+    input.emit(
+      input.run,
+      `Paper writer stage "${input.stage}" suppressed ${suppressedDeltaCount} additional streamed LLM progress update(s) to keep TUI output bounded.`
+    );
+    suppressedDeltaCount = 0;
+  };
+
+  return {
+    onProgress(event: LLMProgressEvent) {
+      const text = compactProgressLine(event.text, MAX_PAPER_WRITER_PROGRESS_LINE_CHARS);
+      if (!text) {
+        return;
+      }
+      if (event.type !== "delta") {
+        input.emit(input.run, text);
+        return;
+      }
+      if (emittedDeltaCount >= MAX_PAPER_WRITER_PROGRESS_EVENTS_PER_STAGE) {
+        suppressedDeltaCount += 1;
+        if (!suppressionNoticeEmitted) {
+          suppressionNoticeEmitted = true;
+          input.emit(
+            input.run,
+            `Paper writer stage "${input.stage}" is still receiving streamed LLM output; further token-level progress is being summarized.`
+          );
+        }
+        return;
+      }
+      emittedDeltaCount += 1;
+      input.emit(input.run, `LLM> ${text}`);
+    },
+    flush
+  };
+}
+
+function compactProgressLine(value: string, maxLength: number): string {
+  const compact = value.replace(/\s+/gu, " ").trim();
+  if (compact.length <= maxLength) {
+    return compact;
+  }
+  return `${compact.slice(0, Math.max(0, maxLength - 1)).trimEnd()}…`;
+}
+
+function forwardAbort(
+  source: AbortSignal | undefined,
+  controller: AbortController
+): () => void {
+  if (!source) {
+    return () => {};
+  }
+  if (source.aborted) {
+    controller.abort(source.reason);
+    return () => {};
+  }
+  const onAbort = () => controller.abort(source.reason);
+  source.addEventListener("abort", onAbort, { once: true });
+  return () => source.removeEventListener("abort", onAbort);
+}
+
+function buildRoleSystemPrompt(
+  roleId: "paper_writer" | "reviewer",
+  sop: string[],
+  latexTemplateSectionOrder?: string[] | null
+): string {
+  const prompt = [
+    `Role: ${roleId}`,
+    "Follow SOP:",
+    ...sop.map((step, index) => `${index + 1}. ${step}`),
+    "Return JSON only."
+  ].join("\n");
+  if (!latexTemplateSectionOrder?.length) {
+    return prompt;
+  }
+  return (
+    prompt +
+    "\n\nThis paper uses a custom LaTeX template. Prefer this section order: " +
+    latexTemplateSectionOrder.join(", ") +
+    "."
+  );
+}
+
+function buildLatexRepairSystemPrompt(sop: string[]): string {
+  return [
+    "Role: paper_writer",
+    "Task: repair a LaTeX document so that it compiles.",
+    "Preserve the paper's claims, human-facing prose, and bibliography structure.",
+    "Do not add new experimental results.",
+    "Return the full corrected LaTeX source only.",
+    "Relevant SOP:",
+    ...sop.map((step, index) => `${index + 1}. ${step}`)
+  ].join("\n");
+}
+
+function buildOutlinePrompt(
+  bundle: PaperWritingBundle,
+  paperProfile?: PaperProfileConfig,
+  appendixKeepInMainBody?: string[] | null
+): string {
+  const fallbackDraft = buildFallbackPaperDraft(bundle);
+  return [
+    "Return one JSON object with this shape:",
+    "{",
+    '  "title": "string",',
+    '  "abstract_focus": ["string"],',
+    '  "section_headings": ["Introduction", "Related Work", "Method", "Results", "Discussion", "Limitations", "Conclusion"],',
+    '  "key_claim_themes": ["string"],',
+    '  "citation_plan": ["string"]',
+    "}",
+    "",
+    "Base the outline only on the provided workflow outputs.",
+    `Workflow run title (context only, do not copy literally as the paper title): ${bundle.runTitle}`,
+    `Topic: ${bundle.topic}`,
+    `Objective metric: ${bundle.objectiveMetric}`,
+    `Constraints: ${bundle.constraints.join(", ") || "none"}`,
+    `Related-work scout papers: ${bundle.relatedWorkScout?.papers.length || 0}`,
+    `Suggested paper title: ${buildSuggestedPaperTitle(bundle)}`,
+    `Fallback section order: ${fallbackDraft.sections.map((item) => item.heading).join(", ")}`,
+    ...(paperProfile
+      ? [
+          `Column count: ${paperProfile.column_count ?? 2}`,
+          `Target main pages: ${paperProfile.target_main_pages ?? paperProfile.main_page_limit ?? "unknown"}`,
+          `Minimum main pages: ${paperProfile.minimum_main_pages ?? paperProfile.main_page_limit ?? "unknown"}`,
+          `References counted toward limit: ${paperProfile.references_counted}`,
+          `Appendix allowed: ${paperProfile.appendix_allowed}`,
+          `Appendix preferences: ${(paperProfile.prefer_appendix_for || []).join(", ") || "none"}`
+        ]
+      : []),
+    ...(appendixKeepInMainBody && appendixKeepInMainBody.length > 0
+      ? [
+          `Keep these items in the main body when possible: ${appendixKeepInMainBody.join(", ")}`
+        ]
+      : []),
+    "Prefer an outline that preserves the main paper's core logic while reserving only supporting detail for the appendix.",
+    "Do not return a short-manuscript outline that skips Discussion or Limitations."
+  ].join("\n");
+}
+
+function buildLatexRepairPrompt(tex: string, buildLog: string): string {
+  return [
+    "Repair the following LaTeX document using the compile log.",
+    "Return the full corrected LaTeX source only.",
+    "",
+    "Compile log:",
+    buildLog,
+    "",
+    "Current LaTeX:",
+    tex
+  ].join("\n");
+}
+
+function buildDraftPrompt(input: {
+  bundle: PaperWritingBundle;
+  constraintProfile: ConstraintProfile;
+  paperProfile?: PaperProfileConfig;
+  objectiveMetricProfile: ObjectiveMetricProfile;
+  objectiveEvaluation?: ObjectiveMetricEvaluation;
+  outline: PaperWriterOutline;
+}): string {
+  return [
+    buildPaperWriterPrompt({
+      bundle: input.bundle,
+      constraintProfile: input.constraintProfile,
+      objectiveMetricProfile: input.objectiveMetricProfile,
+      objectiveEvaluation: input.objectiveEvaluation
+    }),
+    "",
+    "Outline JSON:",
+    JSON.stringify(input.outline, null, 2),
+    "",
+    ...(input.paperProfile
+      ? [
+          "Paper profile JSON:",
+          JSON.stringify(input.paperProfile, null, 2),
+          ""
+        ]
+      : []),
+    "Do not optimize for brevity alone. The main paper should read like a complete scientific manuscript within the venue budget.",
+    "Write the first complete structured paper draft JSON."
+  ].join("\n");
+}
+
+function buildReviewPrompt(input: {
+  bundle: PaperWritingBundle;
+  outline: PaperWriterOutline;
+  draft: PaperDraft;
+}): string {
+  return [
+    "Review the structured paper draft for unsupported claims, missing sections, weak evidence links, and text that would read like a system log instead of a paper.",
+    "Return one JSON object with this shape:",
+    "{",
+    '  "summary": "string",',
+    '  "revision_notes": ["string"],',
+    '  "unsupported_claims": [{"claim_id": "c1", "reason": "string"}],',
+    '  "missing_sections": ["string"],',
+    '  "missing_citations": ["string"]',
+    "}",
+    "",
+    "Flag any section that relies on log-speak, repeated template phrasing, inline evidence IDs, internal paths, or debug-style headings.",
+    "Flag manuscripts that are too short for a scientific paper, especially if Method, Results, Discussion, or Limitations are summary-like.",
+    "Flag Related Work when it lists paper titles without comparing strands, baselines, or gaps.",
+    "The final manuscript should not use the headings Research Context, Writing Constraints, Results Overview, or Claim Trace.",
+    "",
+    `Topic: ${input.bundle.topic}`,
+    `Objective metric: ${input.bundle.objectiveMetric}`,
+    "Outline JSON:",
+    JSON.stringify(input.outline, null, 2),
+    "",
+    "Draft JSON:",
+    JSON.stringify(input.draft, null, 2),
+    "",
+    "Review context JSON:",
+    JSON.stringify(input.bundle.reviewContext || {}, null, 2)
+  ].join("\n");
+}
+
+function buildRevisionPrompt(input: {
+  bundle: PaperWritingBundle;
+  constraintProfile: ConstraintProfile;
+  paperProfile?: PaperProfileConfig;
+  objectiveMetricProfile: ObjectiveMetricProfile;
+  objectiveEvaluation?: ObjectiveMetricEvaluation;
+  outline: PaperWriterOutline;
+  draft: PaperDraft;
+  review: PaperWriterReview;
+  validationIssues?: PaperDraftValidationIssue[];
+}): string {
+  return [
+    buildPaperWriterPrompt({
+      bundle: input.bundle,
+      constraintProfile: input.constraintProfile,
+      objectiveMetricProfile: input.objectiveMetricProfile,
+      objectiveEvaluation: input.objectiveEvaluation
+    }),
+    "",
+    "Outline JSON:",
+    JSON.stringify(input.outline, null, 2),
+    "",
+    "Current draft JSON:",
+    JSON.stringify(input.draft, null, 2),
+    "",
+    ...(input.paperProfile
+      ? [
+          "Paper profile JSON:",
+          JSON.stringify(input.paperProfile, null, 2),
+          ""
+        ]
+      : []),
+    "Reviewer JSON:",
+    JSON.stringify(input.review, null, 2),
+    "",
+    ...(input.validationIssues?.length
+      ? [
+          "Validation issues JSON:",
+          JSON.stringify(input.validationIssues, null, 2),
+          "",
+          "Address the validation issues directly.",
+          "Do not invent new evidence IDs, paper IDs, or experimental results.",
+          "If a statement lacks support, make it more conservative instead of overstating it.",
+          ""
+        ]
+      : []),
+    "Revise toward human-readable academic prose.",
+    "Do not introduce log-speak, repeated template language, inline evidence IDs, internal paths, or the headings Research Context, Writing Constraints, Results Overview, or Claim Trace.",
+    "Strengthen density and completeness in Method, Results, Discussion, and Limitations without overstating claims.",
+    "Return the revised final structured paper draft JSON."
+  ].join("\n");
+}
+
+function buildFallbackOutline(bundle: PaperWritingBundle): PaperWriterOutline {
+  const fallbackDraft = buildFallbackPaperDraft(bundle);
+  return {
+    title: fallbackDraft.title,
+    abstract_focus: [
+      bundle.topic,
+      bundle.objectiveMetric,
+      bundle.resultAnalysis?.objective_metric?.evaluation?.summary || "Ground results in available evidence."
+    ].filter(Boolean),
+    section_headings: fallbackDraft.sections.map((item) => item.heading),
+    key_claim_themes: fallbackDraft.claims.map((item) => item.statement).slice(0, 4),
+    citation_plan: fallbackDraft.sections
+      .flatMap((item) => item.citation_paper_ids)
+      .filter(Boolean)
+      .slice(0, 6)
+  };
+}
+
+function buildFallbackReview(draft: PaperDraft): PaperWriterReview {
+  return {
+    summary: "Apply conservative revisions where evidence links are weak.",
+    revision_notes: [
+      "Keep unsupported statements tentative.",
+      "Ensure each results claim names evidence or cited papers."
+    ],
+    unsupported_claims: [],
+    missing_sections: [],
+    missing_citations: draft.sections
+      .filter((item) => item.evidence_ids.length > 0 && item.citation_paper_ids.length === 0)
+      .map((item) => item.heading)
+      .slice(0, 4)
+  };
+}
+
+function normalizeOutline(raw: Record<string, unknown>, bundle: PaperWritingBundle): PaperWriterOutline {
+  const fallback = buildFallbackOutline(bundle);
+  const sectionHeadings = normalizeStringArray(raw.section_headings).slice(0, 6);
+  return {
+    title: choosePaperTitle({
+      candidateTitle: raw.title,
+      runTitle: bundle.runTitle,
+      fallbackTitle: fallback.title
+    }),
+    abstract_focus: normalizeStringArray(raw.abstract_focus).slice(0, 6),
+    section_headings: sectionHeadings.length > 0 ? sectionHeadings : fallback.section_headings,
+    key_claim_themes: normalizeStringArray(raw.key_claim_themes).slice(0, 6),
+    citation_plan: normalizeStringArray(raw.citation_plan).slice(0, 8)
+  };
+}
+
+function normalizeReview(raw: Record<string, unknown>, draft: PaperDraft): PaperWriterReview {
+  const unsupported = Array.isArray(raw.unsupported_claims)
+    ? raw.unsupported_claims
+        .map((item) => {
+          if (!item || typeof item !== "object" || Array.isArray(item)) {
+            return undefined;
+          }
+          const value = item as Record<string, unknown>;
+          const claimId = cleanString(value.claim_id);
+          const reason = cleanString(value.reason);
+          if (!claimId || !reason) {
+            return undefined;
+          }
+          return { claim_id: claimId, reason };
+        })
+        .filter((item): item is { claim_id: string; reason: string } => Boolean(item))
+        .slice(0, 8)
+    : [];
+
+  return {
+    summary: cleanString(raw.summary) || "Review completed.",
+    revision_notes: normalizeStringArray(raw.revision_notes).slice(0, 8),
+    unsupported_claims: unsupported,
+    missing_sections: normalizeStringArray(raw.missing_sections).slice(0, 6),
+    missing_citations: normalizeStringArray(raw.missing_citations).slice(0, 6).length > 0
+      ? normalizeStringArray(raw.missing_citations).slice(0, 6)
+      : draft.sections
+          .filter((item) => item.evidence_ids.length > 0 && item.citation_paper_ids.length === 0)
+          .map((item) => item.heading)
+          .slice(0, 6)
+  };
+}
+
+function mergeReviewWithValidationIssues(
+  review: PaperWriterReview,
+  validationIssues: PaperDraftValidationIssue[]
+): PaperWriterReview {
+  const revisionNotes = normalizeStringArray([
+    ...review.revision_notes,
+    ...validationIssues.slice(0, 8).map((issue) => formatValidationIssueAsRevisionNote(issue))
+  ]).slice(0, 10);
+  const missingCitations = normalizeStringArray([
+    ...review.missing_citations,
+    ...validationIssues
+      .filter((issue) => issue.citation_paper_ids.length === 0 || /citation/i.test(issue.message))
+      .map((issue) => issue.section_heading || issue.claim_id || "")
+      .filter(Boolean)
+  ]).slice(0, 8);
+
+  return {
+    ...review,
+    summary: review.summary
+      ? `${review.summary} Resolve the validation warnings without inventing support.`
+      : "Resolve the validation warnings without inventing support.",
+    revision_notes: revisionNotes,
+    missing_citations: missingCitations
+  };
+}
+
+function formatValidationIssueAsRevisionNote(issue: PaperDraftValidationIssue): string {
+  const scope =
+    issue.kind === "claim"
+      ? `claim ${issue.claim_id || "unknown"}`
+      : issue.kind === "paragraph"
+        ? `paragraph ${typeof issue.paragraph_index === "number" ? issue.paragraph_index + 1 : "unknown"} of ${issue.section_heading || "unknown section"}`
+        : `section ${issue.section_heading || "unknown section"}`;
+  return `${scope}: ${issue.message}`;
+}
+
+function parseJsonObject(text: string): Record<string, unknown> {
+  const trimmed = text.trim();
+  const fenced = trimmed.match(/```(?:json)?\s*([\s\S]+?)```/iu)?.[1]?.trim();
+  const candidate = fenced || trimmed;
+  const start = candidate.indexOf("{");
+  const end = candidate.lastIndexOf("}");
+  if (start < 0 || end <= start) {
+    throw new Error("json_object_not_found");
+  }
+  const parsed = JSON.parse(candidate.slice(start, end + 1)) as Record<string, unknown>;
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+    throw new Error("json_object_invalid");
+  }
+  return parsed;
+}
+
+function cleanString(value: unknown): string {
+  return typeof value === "string" ? value.replace(/\s+/g, " ").trim() : "";
+}
+
+function normalizeStringArray(value: unknown): string[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  return [...new Set(value.map((item) => cleanString(item)).filter(Boolean))];
+}
+
+function previewText(text: string): string {
+  return cleanString(text).slice(0, 220);
+}
+
+function extractLatexResponse(text: string): string {
+  const trimmed = text.trim();
+  const fenced = trimmed.match(/```(?:tex|latex)?\s*([\s\S]+?)```/iu)?.[1]?.trim();
+  const candidate = fenced || trimmed;
+  const start = candidate.indexOf("\\documentclass");
+  const source = start >= 0 ? candidate.slice(start).trim() : candidate.trim();
+  if (!source.includes("\\documentclass") || !source.includes("\\begin{document}") || !source.includes("\\end{document}")) {
+    throw new Error("latex_repair_response_missing_full_document");
+  }
+  return `${source}\n`;
+}
+
+function hasStructuredLlmClient(
+  llm: { complete?: unknown } | undefined
+): llm is { complete: (...args: unknown[]) => Promise<unknown> } {
+  return typeof llm?.complete === "function";
+}

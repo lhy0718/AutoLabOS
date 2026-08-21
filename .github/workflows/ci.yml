@@ -1,0 +1,48 @@
+name: ci
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Setup Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "22"
+          cache: "npm"
+
+      - name: Install root dependencies
+        run: npm ci
+
+      - name: Build
+        run: npm run build
+
+      - name: Audit dependency security
+        run: npm run audit:security
+
+      - name: Validate harness records
+        run: npm run validate:harness
+
+      - name: Validate plugin operations preflight
+        run: npm run validate:plugin-operations
+
+      - name: Sync repo-local plugin cache
+        run: npm run plugin:sync-cache -- --write
+
+      - name: Check plugin release readiness
+        run: npm run plugin:release-check
+
+      - name: Test
+        run: npm test
+
+      - name: Validate history-free public source snapshot
+        run: node scripts/export-public-snapshot.mjs --out-dir "${RUNNER_TEMP}/autolabos-public-source"

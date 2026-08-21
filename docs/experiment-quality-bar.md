@@ -1,0 +1,264 @@
+# Experiment and Result Quality Bar
+
+This file defines structural and minimum-semantic quality gates for experiment, result,
+and review artifacts.
+
+## 1) Scope
+Applies to:
+- `run_experiments`
+- `analyze_results`
+- `review`
+
+Checks here are deterministic where possible and artifact-driven by default.
+
+Scientific novelty is evaluated separately rather than fully scored by this
+quality bar.
+It does enforce a minimum boundary between:
+- execution completed
+- experiment structurally valid
+- paper-worthy experimental evidence
+
+## 2) Core distinction
+The runtime must explicitly distinguish:
+- smoke execution
+- toy experiment
+- structurally valid experiment
+- paper-worthy experiment evidence
+
+A successful run is not automatically paper-worthy evidence.
+
+### Evaluation regimes
+
+Paper-scale evidence may use either of two explicit regimes:
+
+- `controlled_deterministic_fault_injection`: cases are produced from a
+  frozen fault registry, gold labels are derived mechanically, an independently
+  implemented oracle replays every artifact mutation, and development/test
+  partitions are disjoint by fault family, base identity, and source hash.
+  Human adjudication is not required for metric gold in this regime. Its
+  maximum claim ceiling is `registered_fault_families_only` and external
+  validation must remain `not_run` or `failed` until separate evidence exists.
+- `naturalistic_human_adjudicated`: cases represent naturally occurring
+  or externally curated defects. Independent human labels, mutation checks,
+  source provenance, and any required license decisions remain part of the
+  evidence contract.
+
+Never infer naturalistic generalization, human attestation, or redistribution
+permission from the controlled regime.
+
+## 3) Required artifact expectations
+
+### A. `run_experiments` success expectations
+Before any experiment command runs for `topic_discovery`, the recomputed
+`effective_execution_authorized` gate must pass. It composes:
+- the trusted closed research funnel and active candidate selection
+- a valid candidate-conditioned direct-prior receipt covering that candidate
+- a passing estimator feasibility report whose candidate experiment contract
+  is promoted unchanged to the executable contract
+
+Pre-probe authorization or estimator feasibility alone is insufficient. Direct
+node entry and direct implementation-manager entry must enforce the same gate.
+
+When execution is recorded as successful:
+- `metrics.json` must exist and be parseable as an object.
+- `objective_evaluation.json` should exist.
+- `run_manifest.json` should exist and summarize what was run.
+- `experiment_portfolio.json` or an equivalent design artifact should exist and describe the planned trial groups.
+- At least one concrete run record must exist under the run artifact tree.
+- `execution/execution_envelope.json` and
+  `execution/execution_receipt.json` must exist, bind each other by SHA-256,
+  and name the actual assurance level. Runtime success may use a `partial` or
+  `compatibility` receipt, but paper-scale promotion may not.
+- `bubblewrap` availability alone is insufficient: an `enforced` receipt
+  requires a successful host probe and an adapter-controlled marker proving
+  that the experiment command started after namespace and mount setup.
+- GPU-backed paper-scale execution must bind a positive requested GPU count and
+  the same number of concrete numeric visible-device IDs. Missing IDs, UUID-only
+  device selectors, unavailable device nodes, and Docker/remote execution through
+  the local adapter remain `partial` until a dedicated enforced adapter exists.
+
+### B. `analyze_results` success expectations
+When `analyze_results` is completed:
+- `result_analysis.json` must exist.
+- objective evaluation evidence must exist (`objective_evaluation.json`).
+- transition/result recommendation artifacts should exist (`transition_recommendation.json`).
+- the analysis must identify the compared systems or settings.
+- the analysis must state whether the objective metric improved, worsened, or was inconclusive.
+- when a portfolio or supplemental trial structure exists, `result_analysis.json` should expose the trial-group summary rather than flattening everything into one opaque run.
+- when a governed brief declares minimum acceptable evidence, `analysis/evidence_scale_assessment.json` must exist and state whether the executed evidence satisfied that floor.
+
+### C. Topic-probe viability projection
+When a bounded topic probe produces a valid outcome:
+- `analysis/venue_viability_report.json` must be recomputable from the active
+  candidate, active contract, closest-prior absorption projection, and outcome.
+- Candidate viability is scoped to the active candidate, not the whole research
+  program.
+- The current evidence ceiling remains `screening_only`.
+- `top_tier_ready` and `acceptance_likelihood_assessed` remain false.
+- Top-tier readiness remains `blocked` or `unresolved` at bounded-probe stage.
+- Confirmatory candidacy is reported separately and does not support a
+  submission or acceptance claim.
+- The report cannot create a second transition authority. It may only veto a
+  confirmatory route when candidacy is `unsupported`.
+
+### D. `review` output expectations
+When `review` is completed:
+- `review/review_packet.json` must exist and contain core sections.
+- `review/decision.json` and `review/revision_plan.json` must exist when review packet decisioning is present.
+- `review/paper_critique.json` must exist as the pre-draft critique artifact (`stage=pre_draft_review`).
+- review output must explicitly state whether the evidence is:
+  - `system_validation_only`
+  - `toy_experiment_only`
+  - `paper_scale_candidate`
+  - `blocked_for_paper_scale`
+
+### D. Pre-draft critique as experiment evidence gate
+The pre-draft critique (`review/paper_critique.json`) evaluates whether experiment evidence is strong enough to justify manuscript drafting. It assesses:
+- Whether experiment results are more than smoke/workflow validation
+- Whether at least one baseline or comparator exists
+- Whether claims are supportable by the available evidence
+- Whether the selected manuscript structure and appendix plan are realistic for the current evidence package
+
+If evidence is insufficient, `review` recommends backtrack to an upstream node rather than allowing progression to `write_paper`.
+For brief-governed runs, this includes honoring the brief's paper ceiling and minimum evidence floor instead of treating them as advisory notes.
+
+## 4) Paper-scale experiment minimum gate
+For an experiment result to count as paper-scale candidate evidence, all of the following must hold:
+
+1. A task, dataset, or certified controlled benchmark object is clearly identified.
+2. An objective metric is clearly identified.
+3. At least one baseline or comparator is explicit.
+4. At least one executed comparison result exists.
+5. The result analysis identifies the direction of change.
+6. The experiment output is connected to the stated research question.
+7. The run is not merely a smoke test of the workflow itself.
+8. The evidence goes beyond a single thin run by including repeated trials/folds/seeds or explicit robustness evidence such as confidence intervals, stability metrics, or effect estimates.
+9. The primary execution has a hash-valid `enforcement=enforced` receipt whose
+   environment, workspace, input-hash, timeout, network-policy, and mount-
+   isolation and device-policy assurances all pass, whose dependency lock is
+   present, and whose required outputs are hash-bound. Docker receipts require
+   matching pre/post container-boundary inspection plus receipt-bound hashed
+   boundary fingerprints, stability, immutable-image, and cleanup evidence.
+   Image-backed execution
+   must also bind an immutable image ID or digest, mask workspace dotenv files,
+   reject dotenv symlinks, bind declared scoped-secret content in memory,
+   verify the private read-only secret snapshot, and prove per-envelope create,
+   non-timeout completion, and cleanup; an uninspected
+   `docker exec` is not paper-grade execution evidence.
+10. A development or tuning run that claims confirmatory blindness uses a
+    physically separate mounted workspace. Code-level non-use of reachable
+    confirmatory labels or gold data is not sufficient evidence of sealing.
+
+If any of the above is missing, the result may still be valid runtime output,
+but it must not be treated as paper-worthy experimental evidence.
+
+## 5) Minimum comparison expectations
+The system should prefer experiments that include at least one of:
+- method vs baseline
+- setting A vs setting B
+- ablation on a key component
+- constrained vs unconstrained condition
+- with-feature vs without-feature comparison
+
+If no comparator exists, `review` should downgrade the paper-readiness state.
+If the brief explicitly requires multiple baselines or comparators, design and review should enforce that stronger floor rather than silently accepting a weaker comparison set.
+
+## 6) Result table expectation
+A paper-scale candidate should produce a compact structured summary that can be turned into a result table.
+At minimum, the result artifacts should preserve:
+- system / condition name
+- dataset or task
+- primary metric, explicit unit (`unitless` when genuinely dimensionless), and numeric scale
+- numeric result
+- explicit subject/reference roles and primary comparison identifier
+- a machine-readable primary effect criterion bound to that exact comparison,
+  raw metric, scale, direction, and inclusive/exclusive threshold
+- optional runtime / cost / memory side metrics
+- notes on failure or caveats
+
+If numeric comparison cannot be recovered from artifacts, the paper should not claim a quantitative result.
+If the observed delta has the favorable sign but does not meet the frozen
+effect criterion, the candidate must not be promoted as successful.
+
+## 7) Failure and negative-result discipline
+Negative or null results are allowed.
+However, the artifacts must make one of the following explicit:
+- baseline matched or outperformed the proposal
+- no meaningful improvement was observed
+- experimental setup was underpowered or inconclusive
+- implementation or data limitations prevented a fair conclusion
+
+Do not silently collapse null or negative results into vague prose.
+
+## 8) Toy/smoke exclusion rule
+The following do **not** count as paper-scale evidence by themselves:
+- a single smoke run proving the pipeline executes
+- internal workflow validation artifacts
+- “run finished successfully” without an external task comparison
+- trivial examples created only to test code paths
+- outputs whose only purpose is harness verification
+
+These may support system validation,
+but they must not be elevated into experimental evidence sections of a paper.
+
+## 9) Review-time downgrade rules
+`review` should emit `blocked_for_paper_scale` or an equivalent downgrade when any of the following is true:
+- no explicit baseline or comparator
+- no recoverable quantitative result
+- neither external task/dataset grounding nor a certified controlled benchmark
+- no link from experiment artifacts to the stated research question
+- the “experiment” is mostly workflow validation
+- the evidence is only a single thin run with no repeated-trial or robustness signal
+- result claims exceed what artifacts support
+- brief-governed minimum evidence is unmet (for example: required repeat count, baseline count, or uncertainty reporting is missing)
+
+## 10) Human annotation validity is not outcome eligibility
+Reviewer-side validation must not require a positive scientific outcome.
+
+- Treat schema validity, assigned-task coverage, and annotator consistency as submission checks.
+- Report downstream corpus admission, clean-base eligibility, or paper-readiness as separate findings.
+- Allow complete, well-formed negative labels to pass submission preflight even when they make an item ineligible for materialization or promotion.
+- Never use a preflight rule that pressures annotators to label an item as successful, complete, or paper-ready.
+
+Adjudication may compare valid labels, and downstream gates may reject an item,
+but those decisions must remain distinct and auditable.
+
+## 11) Confirmatory score and claim-gate separation
+
+A schema-valid score report is not a paper-scale acceptance decision.
+
+- Treat `score.passed=true` only as evidence that the suite and prediction
+  artifacts were parseable, complete for the systems that were present, and
+  successfully scored.
+- Require a separate artifact-backed confirmatory gate to verify the
+  preregistered sample floor, regime-specific case matrix, comparator roles,
+  ablation, repeated provider evidence, post-repair reruns, the applicable
+  source-family or held-out-fault-family analysis, and claim-evidence
+  eligibility.
+- Recompute provider aggregation, benchmark metrics, recovery rate, and
+  clean-control regression from referenced raw artifacts. Do not accept
+  operator-entered summary values.
+- Compute recovery over every original fault case. A family-level sample or
+  operator-selected subset cannot establish confirmatory recovery.
+- Emit `blocked_for_paper_scale` and node-targeted strengthening
+  recommendations when required evidence is missing or invalid.
+- Do not require hypotheses to be supported as a condition of annotation
+  validity or evidence completeness. A complete null or negative result may
+  remain a `paper_scale_candidate` with a lower claim class.
+- A confirmatory evidence gate may establish `paper_scale_candidate` at most.
+  It must not emit `paper_ready=true` without the separate manuscript,
+  reference, template, and submission audit.
+
+## 12) Why this bar exists
+These artifacts are handoff boundaries between nodes.
+Missing structure here causes:
+- ambiguous runtime state
+- weak operator trust
+- brittle paper-stage behavior
+- inflated claims from underpowered experiments
+
+## 13) Intended strictness
+- Strict on structural presence and non-empty required fields.
+- Moderately strict on comparator/result traceability.
+- Conservative on novelty/scientific significance scoring.
+- Very strict about not mislabeling smoke validation as paper evidence.

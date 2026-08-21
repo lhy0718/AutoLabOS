@@ -1,0 +1,781 @@
+import path from "node:path";
+import { tmpdir } from "node:os";
+import { mkdtemp, mkdir, writeFile } from "node:fs/promises";
+
+import { afterEach, describe, expect, it, vi } from "vitest";
+
+import { buildSuggestions } from "../src/tui/commandPalette/suggest.js";
+import { SLASH_COMMANDS, needsArg } from "../src/tui/commandPalette/commands.js";
+import { TerminalApp } from "../src/tui/TerminalApp.js";
+import { InMemoryEventStream } from "../src/core/events.js";
+import { createDefaultGraphState } from "../src/core/stateGraph/defaults.js";
+
+const ORIGINAL_CWD = process.cwd();
+
+afterEach(() => {
+  process.chdir(ORIGINAL_CWD);
+  vi.restoreAllMocks();
+});
+
+const runs = [
+  {
+    id: "run-1",
+    title: "Test Run",
+    currentNode: "collect_papers" as const,
+    status: "running" as const,
+    updatedAt: new Date().toISOString()
+  }
+];
+
+describe("new slash commands", () => {
+  it("includes /clear in suggestions when typing /cl", () => {
+    const suggestions = buildSuggestions({ input: "/cl", runs, activeRunId: "run-1" });
+    expect(suggestions.some((s) => s.applyValue === "/clear ")).toBe(true);
+  });
+
+  it("includes /queue in suggestions when typing /qu", () => {
+    const suggestions = buildSuggestions({ input: "/qu", runs, activeRunId: "run-1" });
+    expect(suggestions.some((s) => s.applyValue === "/queue ")).toBe(true);
+  });
+
+  it("includes /inspect in suggestions when typing /ins", () => {
+    const suggestions = buildSuggestions({ input: "/ins", runs, activeRunId: "run-1" });
+    expect(suggestions.some((s) => s.applyValue === "/inspect ")).toBe(true);
+  });
+
+  it("includes /knowledge in suggestions when typing /kn", () => {
+    const suggestions = buildSuggestions({ input: "/kn", runs, activeRunId: "run-1" });
+    expect(suggestions.some((s) => s.applyValue === "/knowledge ")).toBe(true);
+  });
+
+  it("includes /artifact in suggestions when typing /ar", () => {
+    const suggestions = buildSuggestions({ input: "/ar", runs, activeRunId: "run-1" });
+    expect(suggestions.some((s) => s.applyValue === "/artifact ")).toBe(true);
+  });
+
+  it("includes /jobs in suggestions when typing /jo", () => {
+    const suggestions = buildSuggestions({ input: "/jo", runs, activeRunId: "run-1" });
+    expect(suggestions.some((s) => s.applyValue === "/jobs ")).toBe(true);
+  });
+
+  it("includes /watch in suggestions when typing /wa", () => {
+    const suggestions = buildSuggestions({ input: "/wa", runs, activeRunId: "run-1" });
+    expect(suggestions.some((s) => s.applyValue === "/watch ")).toBe(true);
+  });
+
+  it("includes /explore in suggestions when typing /ex", () => {
+    const suggestions = buildSuggestions({ input: "/ex", runs, activeRunId: "run-1" });
+    expect(suggestions.some((s) => s.applyValue === "/explore ")).toBe(true);
+  });
+
+  it("includes /analyze-results in suggestions when typing /an", () => {
+    const suggestions = buildSuggestions({ input: "/an", runs, activeRunId: "run-1" });
+    expect(suggestions.some((s) => s.applyValue === "/analyze-results ")).toBe(true);
+  });
+
+  it("includes /agent tune-node node suggestions", () => {
+    const suggestions = buildSuggestions({ input: "/agent tune-node ge", runs, activeRunId: "run-1" });
+    expect(suggestions.some((s) => s.applyValue === "/agent tune-node generate_hypotheses ")).toBe(true);
+  });
+
+  it("includes /agent review in subcommand suggestions", () => {
+    const suggestions = buildSuggestions({ input: "/agent rev", runs, activeRunId: "run-1" });
+    expect(suggestions.some((s) => s.applyValue === "/agent review ")).toBe(true);
+  });
+
+  it("shows all new visible commands in root suggestions", () => {
+    const suggestions = buildSuggestions({ input: "/", runs, activeRunId: "run-1" });
+    expect(suggestions.some((s) => s.key === "cmd:clear")).toBe(true);
+    expect(suggestions.some((s) => s.key === "cmd:queue")).toBe(true);
+    expect(suggestions.some((s) => s.key === "cmd:inspect")).toBe(true);
+    expect(suggestions.some((s) => s.key === "cmd:session")).toBe(true);
+    expect(suggestions.some((s) => s.key === "cmd:knowledge")).toBe(true);
+    expect(suggestions.some((s) => s.key === "cmd:artifact")).toBe(true);
+    expect(suggestions.some((s) => s.key === "cmd:jobs")).toBe(true);
+    expect(suggestions.some((s) => s.key === "cmd:watch")).toBe(true);
+    expect(suggestions.some((s) => s.key === "cmd:explore")).toBe(true);
+    expect(suggestions.some((s) => s.key === "cmd:analyze-results")).toBe(true);
+    expect(suggestions.some((s) => s.key === "cmd:stats")).toBe(true);
+  });
+
+  it("resolves /terminal-setup alias ts", () => {
+    const tsSetup = SLASH_COMMANDS.find((c) => c.name === "terminal-setup");
+    expect(tsSetup).toBeTruthy();
+    expect(tsSetup!.aliases).toContain("ts");
+  });
+
+  it("identifies commands needing args", () => {
+    expect(needsArg(SLASH_COMMANDS.find((c) => c.name === "run")!)).toBe(true);
+    expect(needsArg(SLASH_COMMANDS.find((c) => c.name === "clear")!)).toBe(false);
+    expect(needsArg(SLASH_COMMANDS.find((c) => c.name === "brief")!)).toBe(true);
+  });
+
+  it("marks preserveDraftOnRun commands correctly", () => {
+    const clearCmd = SLASH_COMMANDS.find((c) => c.name === "clear");
+    expect(clearCmd?.preserveDraftOnRun).toBe(true);
+
+    const inspectCmd = SLASH_COMMANDS.find((c) => c.name === "inspect");
+    expect(inspectCmd?.preserveDraftOnRun).toBe(true);
+
+    const knowledgeCmd = SLASH_COMMANDS.find((c) => c.name === "knowledge");
+    expect(knowledgeCmd?.preserveDraftOnRun).toBe(true);
+
+    const helpCmd = SLASH_COMMANDS.find((c) => c.name === "help");
+    expect(helpCmd?.preserveDraftOnRun).toBeFalsy();
+  });
+
+  it("has category for all commands", () => {
+    for (const cmd of SLASH_COMMANDS) {
+      expect(cmd.category).toBeTruthy();
+    }
+  });
+
+  it("includes /watch in help output", () => {
+    const app = makeApp();
+    app.printHelp();
+    expect(app.logs).toContain("/watch");
+  });
+
+  it("includes /explore in help output", () => {
+    const app = makeApp();
+    app.printHelp();
+    expect(app.logs).toContain("/explore");
+  });
+
+  it("renders exploration status through /explore", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "autolabos-explore-command-"));
+    process.chdir(root);
+
+    const runId = "run-explore";
+    const runDir = path.join(root, ".autolabos", "runs", runId);
+    await mkdir(path.join(runDir, "experiment_tree"), { recursive: true });
+    await mkdir(path.join(runDir, "figure_audit"), { recursive: true });
+    await writeFile(
+      path.join(runDir, "experiment_tree", "tree.json"),
+      JSON.stringify(
+        {
+          run_id: runId,
+          root_id: "branch-1",
+          created_at: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+          nodes: {
+            "branch-1": {
+              node_id: "branch-1",
+              parent_id: null,
+              root_id: "branch-1",
+              stage: "main_agenda",
+              depth: 0,
+              debug_depth: 0,
+              branch_kind: "main",
+              change_set: { model: "candidate-a" },
+              hypothesis_link: "hypothesis-1",
+              expected_effect: "Improve accuracy.",
+              actual_result_summary: "Improved.",
+              objective_metrics: { accuracy: 0.92 },
+              budget_cost: 1200,
+              reproducibility_status: "reproduced",
+              failure_fingerprint: null,
+              evidence_manifest: {
+                branch_id: "branch-1",
+                executed_at: new Date().toISOString(),
+                artifact_paths: ["analysis/report.json"],
+                metrics_source: "metrics.json",
+                is_executed: true,
+                is_reproducible: true,
+                reproduction_runs: 2
+              },
+              promotion_decision: {
+                branch_id: "branch-1",
+                promoted: true,
+                is_strongest_defensible: true,
+                promotion_score: 7.4,
+                objective_gain: 0.2,
+                budget_penalty: 0.02,
+                instability_penalty: 0,
+                confound_penalty: 0,
+                evidence_completeness: 1,
+                blocking_reasons: [],
+                decided_at: new Date().toISOString()
+              },
+              blocked_reasons: [],
+              status: "promoted",
+              created_at: new Date().toISOString(),
+              updated_at: new Date().toISOString()
+            }
+          }
+        },
+        null,
+        2
+      ),
+      "utf8"
+    );
+    await writeFile(
+      path.join(runDir, "experiment_tree", "manager_state.json"),
+      JSON.stringify(
+        {
+          run_id: runId,
+          current_stage: "main_agenda",
+          stage_decision_history: [],
+          best_defensible_branch_id: "branch-1",
+          pending_rollback_reason: null,
+          promotion_history: [],
+          blocked_claim_fingerprints: [],
+          figure_audit_summary: null,
+          updated_at: new Date().toISOString()
+        },
+        null,
+        2
+      ),
+      "utf8"
+    );
+    await writeFile(
+      path.join(runDir, "figure_audit", "figure_audit_summary.json"),
+      JSON.stringify(
+        {
+          audited_at: new Date().toISOString(),
+          figure_count: 1,
+          issues: [],
+          severe_mismatch_count: 0,
+          review_block_required: false
+        },
+        null,
+        2
+      ),
+      "utf8"
+    );
+
+    const app = makeApp({
+      config: {
+        papers: { max_results: 100 },
+        providers: {
+          llm_mode: "codex_chatgpt_only",
+          codex: { model: "gpt-5.3-codex", reasoning_effort: "xhigh", fast_mode: false },
+          openai: { model: "gpt-5.4", reasoning_effort: "medium" }
+        },
+        runtime: {
+          exploration_enabled: true
+        }
+      } as any,
+      runStore: {
+        listRuns: vi.fn().mockResolvedValue([
+          {
+            id: runId,
+            title: "Exploration Run",
+            currentNode: "design_experiments",
+            status: "running",
+            updatedAt: new Date().toISOString(),
+            graph: createDefaultGraphState()
+          }
+        ]),
+        getRun: vi.fn().mockResolvedValue(undefined)
+      }
+    });
+    app.activeRunId = runId;
+
+    await app.handleExplore();
+
+    expect(app.transientLogs.some((line: string) => line.includes("=== Exploration Engine Status ==="))).toBe(true);
+    expect(app.transientLogs.some((line: string) => line.includes("Current Stage:    main_agenda"))).toBe(true);
+    expect(app.transientLogs.some((line: string) => line.includes("Best Defensible:  branch-1"))).toBe(true);
+  });
+
+  it("prints tune-node comparison reports through /agent", async () => {
+    const app = makeApp({
+      tuneNodeRunner: {
+        run: vi.fn().mockResolvedValue({
+          lines: [
+            "ORIGINAL score: 0.60",
+            "MUTANT score: 0.74",
+            "DELTA: +0.14",
+            "RECOMMENDATION: keep"
+          ]
+        })
+      }
+    });
+    app.resolveTargetRun = vi.fn().mockResolvedValue({
+      id: "run-1",
+      title: "Test Run",
+      topic: "topic",
+      objectiveMetric: "metric",
+      constraints: []
+    });
+    app.setActiveRunId = vi.fn().mockResolvedValue(undefined);
+
+    const result = await app.handleAgent(["tune-node", "generate_hypotheses"]);
+
+    expect(result.ok).toBe(true);
+    expect(app.logs).toContain("ORIGINAL score: 0.60");
+    expect(app.logs).toContain("MUTANT score: 0.74");
+    expect(app.logs).toContain("RECOMMENDATION: keep");
+  });
+
+  it("backward-compatible: existing visible commands still appear", () => {
+    const suggestions = buildSuggestions({ input: "/", runs, activeRunId: "run-1" });
+    expect(suggestions.some((s) => s.key === "cmd:help")).toBe(true);
+    expect(suggestions.some((s) => s.key === "cmd:new")).toBe(true);
+    expect(suggestions.some((s) => s.key === "cmd:approve")).toBe(true);
+  });
+
+  it("keeps doctor hidden in root suggestions", () => {
+    const suggestions = buildSuggestions({ input: "/", runs, activeRunId: "run-1" });
+    expect(suggestions.some((s) => s.key === "cmd:doctor")).toBe(false);
+  });
+
+  it("documents the exact opt-in doctor compatibility flag", () => {
+    const doctor = SLASH_COMMANDS.find((command) => command.name === "doctor");
+
+    expect(doctor).toMatchObject({
+      usage: "/doctor [--live-provider]",
+      argHint: "[--live-provider]"
+    });
+  });
+
+  it("keeps default doctor local and passes the configured chat slot only for the exact live flag", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "autolabos-doctor-command-"));
+    process.chdir(root);
+
+    const abortController = new AbortController();
+    const probeChatCompatibility = vi.fn().mockResolvedValue({
+      status: "request_rejected",
+      ignoredMarker: "response-body-marker"
+    });
+    const config = makeDoctorConfig("codex_chatgpt_only", "configured-chat-slot");
+    const originalConfig = structuredClone(config);
+    const app = makeApp({
+      config,
+      codex: {
+        checkEnvironmentReadiness: vi.fn().mockResolvedValue([]),
+        probeChatCompatibility
+      }
+    });
+
+    const localResult = await app.executeParsedSlash("doctor", [], abortController.signal);
+    expect(localResult).toEqual({ ok: true });
+    expect(probeChatCompatibility).not.toHaveBeenCalled();
+
+    const liveResult = await app.executeParsedSlash("doctor", ["--live-provider"], abortController.signal);
+    expect(liveResult).toEqual({ ok: true });
+    expect(probeChatCompatibility).toHaveBeenCalledTimes(1);
+    expect(probeChatCompatibility).toHaveBeenCalledWith({
+      model: "configured-chat-slot",
+      timeoutMs: undefined,
+      abortSignal: abortController.signal
+    });
+    expect(config).toEqual(originalConfig);
+    expect(app.logs.join("\n")).not.toContain("configured-chat-slot");
+    expect(app.logs.join("\n")).not.toContain("response-body-marker");
+    expect(app.logs.join("\n")).toContain("provider_request_rejected");
+  });
+
+  it("rejects invalid or unsupported live doctor requests before probing", async () => {
+    const probeChatCompatibility = vi.fn();
+    const codexApp = makeApp({
+      config: makeDoctorConfig("codex_chatgpt_only", "configured-chat-slot"),
+      codex: { probeChatCompatibility }
+    });
+
+    const invalidResult = await codexApp.executeParsedSlash("doctor", ["--live-provider", "extra"]);
+    expect(invalidResult).toEqual({ ok: false, reason: "invalid doctor options" });
+    expect(probeChatCompatibility).not.toHaveBeenCalled();
+    expect(codexApp.logs).toContain("Unknown /doctor option. Usage: /doctor [--live-provider]");
+    expect(codexApp.logs.join("\n")).not.toContain("extra");
+
+    const unsupportedApp = makeApp({
+      config: makeDoctorConfig("openai_api", "configured-chat-slot"),
+      codex: { probeChatCompatibility }
+    });
+    const unsupportedResult = await unsupportedApp.executeParsedSlash("doctor", ["--live-provider"]);
+    expect(unsupportedResult).toEqual({
+      ok: false,
+      reason: "Live provider compatibility check requires a configured Codex chat provider."
+    });
+    expect(probeChatCompatibility).not.toHaveBeenCalled();
+  });
+});
+
+function makeDoctorConfig(
+  llmMode: "codex" | "codex_chatgpt_only" | "openai_api" | "ollama",
+  chatModel: string
+): any {
+  return {
+    version: 1,
+    project_name: "doctor-command-fixture",
+    providers: {
+      llm_mode: llmMode,
+      codex: {
+        model: "configured-research-slot",
+        chat_model: chatModel,
+        reasoning_effort: "low",
+        fast_mode: false,
+        auth_required: true
+      },
+      openai: {
+        model: "configured-api-slot",
+        reasoning_effort: "low",
+        api_key_required: true
+      }
+    },
+    workflow: {
+      mode: "agent_approval",
+      wizard_enabled: true,
+      approval_mode: "minimal",
+      execution_approval_mode: "manual"
+    },
+    experiments: {
+      candidate_isolation: "attempt_snapshot_restore",
+      network_policy: "blocked"
+    },
+    papers: { max_results: 10, per_second_limit: 1 },
+    paper: { template: "acl", build_pdf: false, latex_engine: "none", validation_mode: "default" },
+    research: { default_topic: "", default_constraints: [], default_objective_metric: "" },
+    paths: { runs_dir: ".autolabos/runs", logs_dir: ".autolabos/logs" }
+  };
+}
+
+function makeApp(overrides: Record<string, unknown> = {}): any {
+  const eventStream = new InMemoryEventStream();
+  const app = new TerminalApp({
+    config: {
+      papers: { max_results: 100 },
+      providers: {
+        llm_mode: "codex_chatgpt_only",
+        codex: { model: "gpt-5.3-codex", reasoning_effort: "xhigh", fast_mode: false },
+        openai: { model: "gpt-5.4", reasoning_effort: "medium" }
+      }
+    } as any,
+    runStore: {
+      listRuns: vi.fn().mockResolvedValue([]),
+      getRun: vi.fn().mockResolvedValue(undefined)
+    } as any,
+    titleGenerator: {} as any,
+    codex: {} as any,
+    eventStream,
+    orchestrator: {} as any,
+    semanticScholarApiKeyConfigured: false,
+    onQuit: () => {},
+    saveConfig: async () => {},
+    ...(overrides as any)
+  });
+
+  app.render = () => {};
+  app.updateSuggestions = () => {};
+  app.drainQueuedInputs = async () => {};
+  app.interactiveSupervisor = {
+    getActiveRequest: vi.fn().mockResolvedValue(undefined)
+  };
+  app.__eventStream = eventStream;
+  return app;
+}
+
+describe("diagnostic command transient logs", () => {
+  it("handleInspect uses transient logs not permanent logs", () => {
+    const app = makeApp();
+    app.handleInspect();
+    expect(app.transientLogs.length).toBeGreaterThan(0);
+    expect(app.transientLogs.some((l: string) => l.includes("Session diagnostics"))).toBe(true);
+    expect(app.logs.length).toBe(0);
+  });
+
+  it("handleStats uses transient logs not permanent logs", () => {
+    const app = makeApp();
+    app.handleStats();
+    expect(app.transientLogs.length).toBeGreaterThan(0);
+    expect(app.transientLogs.some((l: string) => l.includes("Local session metrics"))).toBe(true);
+    expect(app.logs.length).toBe(0);
+  });
+
+  it("handleTerminalSetup uses transient logs not permanent logs", () => {
+    const app = makeApp();
+    app.handleTerminalSetup();
+    expect(app.transientLogs.length).toBeGreaterThan(0);
+    expect(app.transientLogs.some((l: string) => l.includes("Terminal setup"))).toBe(true);
+    expect(app.logs.length).toBe(0);
+  });
+
+  it("clearTransientLogs removes all transient entries", () => {
+    const app = makeApp();
+    app.handleInspect();
+    expect(app.transientLogs.length).toBeGreaterThan(0);
+    app.clearTransientLogs();
+    expect(app.transientLogs.length).toBe(0);
+  });
+
+  it("getRenderableLogs includes transient logs in output", () => {
+    const app = makeApp();
+    app.handleInspect();
+    const logs = app.getRenderableLogs();
+    expect(logs.some((l: string) => l.includes("Session diagnostics"))).toBe(true);
+  });
+
+  it("getRenderableLogs shows empty after clearing transient logs", () => {
+    const app = makeApp();
+    app.handleInspect();
+    app.clearTransientLogs();
+    expect(app.getRenderableLogs()).toEqual([]);
+  });
+
+  it("lists manuscript-quality artifact shortcuts in the TUI artifact command", async () => {
+    const app = makeApp();
+    app.resolveTargetRun = vi.fn().mockResolvedValue({
+      id: "run-1",
+      title: "Test Run",
+      currentNode: "write_paper",
+      status: "paused"
+    });
+    app.activeRunId = "run-1";
+    app.activeRunInsight = {
+        title: "Manuscript quality",
+        lines: [],
+        manuscriptQuality: {
+          status: "stopped",
+          stage: "post_repair_1",
+          reasonCategory: "policy_hard_stop",
+          reviewReliability: "grounded",
+          triggeredBy: ["appendix_hygiene"],
+          repairAttempts: {
+            attempted: 1,
+            allowedMax: 2,
+            remaining: 0
+          },
+          issueCounts: {
+            manuscript: 1,
+            hardStopPolicy: 1,
+            backstopOnly: 0,
+            scientificBlockers: 0,
+            submissionBlockers: 0,
+            reviewerMissedPolicy: 1,
+            reviewerCoveredBackstop: 0
+          },
+          issueGroups: {
+            manuscript: [],
+            hardStopPolicy: [],
+            backstopOnly: [],
+            scientific: [],
+            submission: []
+          },
+          artifactRefs: [
+            {
+              label: "Manuscript quality gate",
+              path: "paper/manuscript_quality_gate.json"
+            }
+          ]
+        }
+      };
+    app.setActiveRunId = vi.fn();
+
+    const result = await app.handleArtifact([]);
+
+    expect(result.ok).toBe(true);
+    expect(app.setActiveRunId).not.toHaveBeenCalled();
+    expect(app.logs).toContain("Artifact shortcuts for run-1:");
+    expect(app.logs).toContain("- Manuscript quality gate: /artifact paper/manuscript_quality_gate.json");
+  });
+
+  it("lists review readiness-risk artifact shortcuts in the TUI artifact command", async () => {
+    const app = makeApp();
+    app.resolveTargetRun = vi.fn().mockResolvedValue({
+      id: "run-1",
+      title: "Test Run",
+      currentNode: "review",
+      status: "paused"
+    });
+    app.activeRunId = "run-1";
+    app.activeRunInsight = {
+        title: "Review packet",
+        lines: [],
+        readinessRisks: {
+          stage: "review",
+          readinessState: "blocked_for_paper_scale",
+          paperReady: false,
+          riskCounts: {
+            total: 1,
+            blocked: 1,
+            warning: 0
+          },
+          risks: [
+            {
+              code: "review_minimum_gate_blocked_for_paper_scale",
+              section: "Paper scale",
+              severity: "fail",
+              message: "Minimum gate: 3 check(s) failed — ceiling: blocked_for_paper_scale.",
+              source: "review_readiness"
+            }
+          ],
+          artifactRefs: [
+            {
+              label: "Review readiness risks",
+              path: "review/readiness_risks.json"
+            }
+          ]
+        }
+      };
+    app.setActiveRunId = vi.fn();
+
+    const result = await app.handleArtifact([]);
+
+    expect(result.ok).toBe(true);
+    expect(app.setActiveRunId).not.toHaveBeenCalled();
+    expect(app.logs).toContain("Artifact shortcuts for run-1:");
+    expect(app.logs).toContain("- Review readiness risks: /artifact review/readiness_risks.json");
+  });
+
+  it("keeps the active mutation target unchanged across explicit read-only run queries", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "autolabos-read-only-target-"));
+    process.chdir(root);
+    const now = new Date().toISOString();
+    const graph = createDefaultGraphState();
+    graph.currentNode = "analyze_results";
+    const inspectedRun = {
+      version: 3,
+      workflowVersion: 3,
+      id: "run-2",
+      title: "Inspected Run",
+      topic: "topic",
+      constraints: [],
+      objectiveMetric: "metric",
+      status: "paused",
+      currentNode: "analyze_results",
+      nodeThreads: {},
+      createdAt: now,
+      updatedAt: now,
+      graph,
+      memoryRefs: {
+        runContextPath: ".autolabos/runs/run-2/memory/run_context.json",
+        longTermPath: ".autolabos/runs/run-2/memory/long_term.jsonl",
+        episodePath: ".autolabos/runs/run-2/memory/episodes.jsonl"
+      }
+    };
+    const app = makeApp();
+    app.activeRunId = "run-1";
+    app.resolveTargetRun = vi.fn().mockResolvedValue(inspectedRun);
+    app.loadRunInsight = vi.fn().mockResolvedValue({
+      title: "Inspected insight",
+      lines: [],
+      readinessRisks: {
+        artifactRefs: [{ label: "Review evidence", path: "review/evidence.json" }]
+      }
+    });
+    app.setActiveRunId = vi.fn();
+
+    const artifactResult = await app.handleArtifact(["--run", "run-2"]);
+    expect(artifactResult.ok).toBe(true);
+    expect(app.activeRunId).toBe("run-1");
+
+    const analysisResult = await app.handleAnalyzeResults(["run-2"]);
+    expect(analysisResult.ok).toBe(true);
+    expect(app.activeRunId).toBe("run-1");
+
+    const statusResult = await app.handleAgent(["status", "run-2"]);
+    expect(statusResult.ok).toBe(true);
+    expect(app.activeRunId).toBe("run-1");
+    expect(app.setActiveRunId).not.toHaveBeenCalled();
+  });
+
+  it("starts /watch and updates rows when a mock event arrives", async () => {
+    const app = makeApp();
+    const now = new Date().toISOString();
+    const graph = createDefaultGraphState();
+    graph.currentNode = "analyze_results";
+    graph.nodeStates.analyze_results.status = "running";
+    graph.nodeStates.analyze_results.updatedAt = now;
+    const run = {
+      version: 3,
+      workflowVersion: 3,
+      id: "12345678-run-watch",
+      title: "Watch Run",
+      topic: "topic",
+      constraints: [],
+      objectiveMetric: "metric",
+      status: "running",
+      currentNode: "analyze_results",
+      nodeThreads: {},
+      createdAt: now,
+      updatedAt: now,
+      graph,
+      memoryRefs: {
+        runContextPath: ".autolabos/runs/12345678-run-watch/memory/run_context.json",
+        longTermPath: ".autolabos/runs/12345678-run-watch/memory/long_term.jsonl",
+        episodePath: ".autolabos/runs/12345678-run-watch/memory/episodes.jsonl"
+      }
+    };
+    app.runStore.listRuns = vi.fn().mockResolvedValue([]);
+    app.runStore.getRun = vi.fn().mockResolvedValue(run);
+
+    await app.handleWatch();
+    expect(app.getRenderableLogs().some((line: string) => line.includes("Watch: live run and background job view"))).toBe(true);
+
+    const event = app.__eventStream.emit({
+      type: "NODE_STARTED",
+      runId: run.id,
+      node: "analyze_results",
+      payload: {}
+    });
+    app.handleStreamEvent(event);
+
+    await vi.waitFor(() => {
+      const logs = app.getRenderableLogs();
+      expect(logs.some((line: string) => line.includes("12345678"))).toBe(true);
+      expect(logs.some((line: string) => line.includes("analyze_results"))).toBe(true);
+      expect(logs.some((line: string) => line.includes("running"))).toBe(true);
+    });
+
+    await app.handleKeypress("q", { name: "q" });
+    expect(app.watchModeActive).toBe(false);
+  });
+});
+
+describe("mouse event suppression", () => {
+  it("sets suppressMouseKeypresses when SGR mouse data is received", () => {
+    const app = makeApp();
+    // SGR scroll up event: button 64, col 10, row 5, press
+    const scrollUp = Buffer.from("\x1b[<64;10;5M");
+    app.handleRawKeyboardData(scrollUp);
+    expect(app.suppressMouseKeypresses).toBe(true);
+  });
+
+  it("sets suppressMouseKeypresses for click events too", () => {
+    const app = makeApp();
+    // SGR left click: button 0, col 20, row 10, press
+    const click = Buffer.from("\x1b[<0;20;10M");
+    app.handleRawKeyboardData(click);
+    expect(app.suppressMouseKeypresses).toBe(true);
+  });
+
+  it("does not set suppressMouseKeypresses for normal keyboard input", () => {
+    const app = makeApp();
+    app.handleRawKeyboardData(Buffer.from("hello"));
+    expect(app.suppressMouseKeypresses).toBe(false);
+  });
+
+  it("scrolls transcript on scroll up event", () => {
+    const app = makeApp();
+    app.lastRenderedFrame = { maxTranscriptScrollOffset: 100 } as any;
+    app.handleRawKeyboardData(Buffer.from("\x1b[<64;10;5M"));
+    expect(app.transcriptScrollOffset).toBe(3);
+  });
+
+  it("scrolls transcript on scroll down event", () => {
+    const app = makeApp();
+    app.transcriptScrollOffset = 10;
+    app.lastRenderedFrame = { maxTranscriptScrollOffset: 100 } as any;
+    app.handleRawKeyboardData(Buffer.from("\x1b[<65;10;5M"));
+    expect(app.transcriptScrollOffset).toBe(7);
+  });
+
+  it("disables mouse tracking under tmux-style terminals", () => {
+    const previousTmux = process.env.TMUX;
+    const previousTerm = process.env.TERM;
+    process.env.TMUX = "/tmp/tmux-1000/default,123,0";
+    process.env.TERM = "screen-256color";
+
+    try {
+      const app = makeApp();
+      expect((app as any).shouldEnableMouseTracking()).toBe(false);
+    } finally {
+      if (previousTmux === undefined) delete process.env.TMUX;
+      else process.env.TMUX = previousTmux;
+      if (previousTerm === undefined) delete process.env.TERM;
+      else process.env.TERM = previousTerm;
+    }
+  });
+});

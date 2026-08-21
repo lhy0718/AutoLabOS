@@ -1,0 +1,221 @@
+# TUI/Web Live Validation Discipline
+
+This guide standardizes how live interactive issues are recorded and converted into regressions.
+
+## 1) Live validation first
+
+For interactive defects, real TUI/web behavior is the primary ground truth.
+
+Minimum loop:
+
+1. Reproduce in a real session.
+2. Record the issue in `ISSUES.md` using the required fields.
+3. Patch the smallest plausible root cause.
+4. Re-run the same flow.
+5. Check adjacent flows for regressions.
+
+### Direct-testing rule
+
+If the user explicitly asks you to test the behavior yourself or to show actual runtime behavior, do not treat deterministic smoke fixtures, fake-provider runs, replay-only checks, or unit/integration tests as fulfilling that request.
+
+Those tools are still useful as secondary diagnostics or regression checks, but the direct-testing request must use a real TUI/web flow when the environment allows. If credentials, network access, or required binaries block that real flow, state the limitation explicitly and do not present the fixture-driven result as equivalent to direct live validation.
+
+### Validation workspace location
+
+Live validation and test fixtures should run outside the repository checkout.
+
+- The default validation workspace root is the sibling `.autolabos-validation/`
+  directory next to the repo root. If the repo is checked out under the user's
+  home directory, this is commonly `~/.autolabos-validation/`.
+- Set `AUTOLABOS_VALIDATION_WORKSPACE_ROOT` to override that root.
+- `npm test` uses `<validation-workspace>/.tmp` for process temp directories.
+- Live fixture workspaces are created under `<validation-workspace>/.live/`.
+- Real TUI/web validation workspaces should live under the validation root, not
+  inside the implementation repo.
+
+## 2) Required bug taxonomy
+
+Tag root-cause hypotheses with one dominant class:
+
+- `persisted_state_bug`
+- `in_memory_projection_bug`
+- `refresh_render_bug`
+- `resume_reload_bug`
+- `race_timing_bug`
+
+## 3) Required issue fields
+
+Every active live-validation issue entry must include:
+
+- Validation target
+- Environment/session context
+- Reproduction steps
+- Expected behavior
+- Actual behavior
+- Fresh vs existing session comparison
+- Root cause hypothesis
+- Code/test changes
+- Regression status
+- Follow-up risks
+
+Use `docs/live-validation-issue-template.md`.
+
+## 4) Fresh vs existing session rule
+
+Always check both:
+
+- **Fresh session**: clean process/session start.
+- **Existing session**: resumed/ongoing process with prior state.
+
+If behavior diverges, call it out explicitly in the issue entry.
+
+## 4.5) `/doctor` as the first diagnostics surface
+
+Use `/doctor` in TUI or the web Doctor tab first when triaging live issues.
+
+- Environment checks show tool/runtime readiness.
+- Harness diagnostics summarize issue-log integrity and run artifact consistency for the current workspace.
+- Findings include a problem class and a short remediation hint so triage can move directly to reproduction/fix.
+
+The default `/doctor` command and `GET /api/doctor` do not send a live Codex
+chat or generation request. Existing non-generation diagnostics may still query
+a configured local runtime for health or model availability. Codex chat
+compatibility is an explicit, quota-bearing check:
+
+- Run the exact TUI command `/doctor --live-provider`, or press the explicit
+  live-provider action in the Web Doctor tab.
+- The check sends one fixed, non-user Codex chat request using the configured
+  `chat_model`, or the configured `model` only when `chat_model` is absent.
+- The request is attempted once with no retry and may consume provider quota.
+- The displayed result is a bounded safe status. Provider output, response
+  bodies, and credentials are not displayed or persisted by the probe.
+- The default TUI command and Web Doctor refresh must still be rechecked to
+  confirm that neither path sends a live Codex chat or generation request
+  implicitly.
+
+Treat a successful live-provider result as evidence of one-shot chat
+compatibility only. It is not evidence that a research run, PDF build,
+long-running session, or paper-readiness gate will succeed.
+
+### Fixture scope note
+
+When a temp workspace exists only to validate operator surfaces, it may declare
+`run_status.json.validation_scope = "live_fixture"`.
+
+- This does not loosen the contract for normal runs.
+- It allows harness/doctor to evaluate the fixture against the smaller artifact set
+  that the validation target actually needs.
+- Live fixtures should still emit a matching `run_completeness_checklist.json` so the
+  reduced scope is explicit and inspectable.
+- By default, live-validation workspaces live under a sibling `.autolabos-validation/` root outside the repository.
+- If needed, you can override that root with `AUTOLABOS_VALIDATION_WORKSPACE_ROOT`.
+- Do not hardcode a machine-specific absolute path into the repository; configure it
+  through the environment at runtime instead.
+- Reuse the shared fixture helper in `tests/helpers/liveFixtureWorkspace.ts` when
+  constructing review/paper operator workspaces.
+- The helper creates workspaces under `<validation-root>/.live/` and copies
+  `<validation-root>/.env` into the fixture root when present, so `/doctor` sees
+  the same workspace-local secret surface as a normal run.
+- Do not hand-write `run_status.json` and checklist payloads separately.
+
+## 5) Live bug -> regression test workflow
+
+When a live bug is confirmed:
+
+1. Capture a minimal reproduction trace in `ISSUES.md`.
+2. Identify the narrowest stable seam for a test (render projection, command handling, node transition, etc.).
+3. Add a deterministic unit/integration test under `tests/`.
+4. Link the test path back in the issue entry.
+5. Mark regression status only after test passes and live flow is re-checked.
+
+### Example mapping (repository-native)
+
+- Live symptom: `/approve` looked successful when no pending approval existed.
+- Regression test seam: TUI/interaction command guards.
+- Test mapping:
+  - `tests/terminalAppPlanExecution.test.ts`
+  - `tests/interactionSession.test.ts`
+
+This pattern is preferred over adding a separate heavy live-testing framework.
+
+## 6) Manuscript critique validation
+
+A TUI validation run must verify the following paper-readiness signals:
+
+### 6.1 Critique artifacts emitted
+- `review/paper_critique.json` (pre-draft, `stage=pre_draft_review`) is emitted after `review`.
+- `paper/paper_critique.json` (post-draft, `stage=post_draft_review`) is emitted after `write_paper`.
+- Both artifacts conform to the `PaperCritique` schema.
+
+### 6.2 Manuscript type classification
+- Weak evidence runs are classified as `system_validation_note` or `research_memo`, not `paper_ready`.
+- `write_paper completed` is visibly distinct from `paper_ready` in TUI/web summaries.
+- Healthy runs with strong evidence can still advance and be classified as `paper_ready`.
+
+### 6.3 Issue routing discipline
+- Writing/style-only issues (abstract wording, section ordering, title style) stay local to `write_paper` repair.
+- Upstream evidence deficits (missing baselines, unsupported claims, no result table, statistical insufficiency) trigger backtrack recommendations.
+- Template/layout mismatch alone does NOT cause upstream backtrack.
+
+### 6.4 Template structure guidance
+- Template-derived structure hints can persist in run state/artifacts.
+- Critique artifacts and TUI summaries surface manuscript state and blocking issues without a separate style-target field.
+- Scientific adequacy critique remains independent from local layout/wording repair.
+
+### 6.5 Transition correctness
+- Missing baseline/result table/claim-evidence support causes downgrade or backtrack.
+- Critique recommendations map to supported transition targets (`implement_experiments`, `design_experiments`, `generate_hypotheses`).
+- Pre-draft gate blocks weak evidence from reaching `write_paper`.
+- Post-draft critique can trigger bounded backtrack when draft reveals upstream deficits.
+
+### 6.6 TUI surfacing
+- Manuscript type (e.g., `paper_ready`, `blocked_for_paper_scale`) appears in run projection.
+- Blocking issues are surfaceable in run detail view.
+- `workflow_completed` is visually distinct from `paper_ready`.
+
+## 7) Topic-discovery collection projection matrix
+
+Collection projection is fail-closed. A probe authorization is trusted only
+when the current collection generation uses the runtime's supported corpus-quality
+and semantic-review contracts with `passed=true` and
+`semantic_review.status=complete`.
+
+### 7.1 Generation and authorization
+
+| Runtime/artifact state | Projected collection state | Quality/recovery authority | Authorization trusted / probe allowed |
+| --- | --- | --- | --- |
+| Current generation matches all present collection artifacts; current-contract complete pass | `quality_gate_passed` | Current quality is authoritative | Eligible for `true / true` when the closed funnel also passes |
+| `collect_papers` is running and any collection artifact differs from `collect_generation.json` | `collecting` | Prior quality reasons, query-plan attempt, and recovery hint are ignored | `false / false` |
+| Collection is terminal and present collection artifacts disagree on generation | `failed` | Mismatched quality and recovery artifacts are ignored | `false / false` |
+| Current-contract complete review exists but quality fails | `quality_gate_failed` or `quality_gate_exhausted` | Current failure reason is authoritative | `false / false` |
+| Version 3 quality, partial review, operational reviewer failure, or missing required quality | Non-passing collection state | Downstream gap, portfolio, and decision artifacts remain diagnostic only | `false / false` |
+| Candidate-conditioned additional collection completed with a valid receipt | `quality_gate_passed` | Validate the current candidate plan/receipt archive and recursively validate the immutable broad-discovery parent lineage; stale parent quality files are not treated as current-attempt files | Pre-probe authority may remain trusted; execution still requires selected-candidate coverage and the estimator gate |
+
+`probe_authorized` and `effective_execution_authorized` are separate display
+states. Web and TUI must show a selected probe while its execution preflight is
+pending or blocked, and must display execution as authorized only when the
+shared gate reports all three components trusted and passing.
+
+### 7.2 Failure class and recovery display
+
+| `failure_class` | `active` / `feedback_applied` | `semantic_review_status` | TUI/Web display |
+| --- | --- | --- | --- |
+| `query_quality_failure` | `true / true` | `complete` | Show the concise quality reason and active query-reformulation hint |
+| `semantic_review_operational_failure` | `false / false` | `operational_failure` | Show reviewer operational failure; do not show a query-reformulation hint |
+| `semantic_review_incomplete` | `false / false` | `partial` | Show reviewer incompleteness; do not show a query-reformulation hint |
+
+Reviewer-only failures must not alter bounded query feedback history or appear
+as query-quality feedback.
+
+### 7.3 Retry and reload state
+
+| Persisted graph state | Displayed node attempt |
+| --- | --- |
+| `running`, retry counter `k` | `min(k + 1, maxAttemptsPerNode)` |
+| `completed` or `needs_approval`, retry counter `k` | `min(k + 1, maxAttemptsPerNode)` |
+| `failed`, retry counter `k` | `min(k, maxAttemptsPerNode)` |
+| Historical `usage.byNode.collect_papers.executions` exceeds the current retry cycle | Ignore cumulative executions for attempt display |
+
+Every persisted transition into `running` clears the prior node `lastError`
+and stale note before execution starts. Event-driven TUI projection applies the
+same rule so an existing session and a fresh reload show the same running state.

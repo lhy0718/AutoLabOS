@@ -1,0 +1,176 @@
+#!/usr/bin/env python3
+import json
+import os
+import pty
+import re
+import select
+import signal
+import subprocess
+import sys
+import time
+from pathlib import Path
+
+DOCTOR_CHECK_PATTERN = r"\[(OK|ATTN|WARN|FAIL)\]\s+[A-Za-z0-9-]+:"
+DOCTOR_HARNESS_PATTERN = r"\[(OK|FAIL)\]\s+harness-validation:"
+
+
+STOP_PATTERN = (
+    r"(Run paused:|Research stopped:|Research finished:|Human input required:|"
+    r"The brief still needs required sections before AutoLabOS can start the run\.)"
+)
+
+
+def wait_for(fd: int, pattern: str, timeout: float, buffer_text: str) -> str:
+    deadline = time.time() + timeout
+    regex = re.compile(pattern, re.MULTILINE)
+    joined = buffer_text
+    if regex.search(joined):
+        return joined
+    while time.time() < deadline:
+        ready, _, _ = select.select([fd], [], [], max(0.1, deadline - time.time()))
+        if not ready:
+            continue
+        try:
+            data = os.read(fd, 8192)
+        except OSError:
+            break
+        if not data:
+            break
+        joined += data.decode("utf-8", errors="ignore")
+        if regex.search(joined):
+            return joined
+    print(f"FAIL: pattern not found before timeout: {pattern}")
+    if joined:
+        print("---- recent buffer ----")
+        print(joined[-6000:])
+        print("-----------------------")
+    raise SystemExit(1)
+
+
+
+def run_doctor_pattern_selftest() -> int:
+    current = "+ [OK] disk-free-space: Disk space looks healthy.\nx [FAIL] harness-validation: 1 issue(s), 1 run(s) checked\n"
+    previous = "+ [OK] readiness: ok\n+ [OK] harness-validation: 0 issue(s), 0 run(s) checked\n"
+    if not re.search(DOCTOR_CHECK_PATTERN, current):
+        print("FAIL: doctor check pattern did not match current check-row output")
+        return 1
+    if not re.search(DOCTOR_HARNESS_PATTERN, current):
+        print("FAIL: doctor harness pattern did not match current harness output")
+        return 1
+    if not re.search(DOCTOR_CHECK_PATTERN, previous):
+        print("FAIL: doctor check pattern did not preserve older readiness output")
+        return 1
+    if not re.search(DOCTOR_HARNESS_PATTERN, previous):
+        print("FAIL: doctor harness pattern did not preserve older harness output")
+        return 1
+    print("PASS: live-validation doctor output pattern self-test")
+    return 0
+
+def send_line(fd: int, text: str) -> None:
+    os.write(fd, text.encode("utf-8") + b"\n")
+
+
+def latest_run_id(workspace: Path) -> str | None:
+    runs_path = workspace / ".autolabos" / "runs" / "runs.json"
+    try:
+        parsed = json.loads(runs_path.read_text(encoding="utf-8"))
+    except Exception:
+        return None
+    runs = parsed.get("runs")
+    if not isinstance(runs, list) or not runs:
+        return None
+    sorted_runs = sorted(runs, key=lambda item: str(item.get("createdAt") or item.get("updatedAt") or ""))
+    run_id = sorted_runs[-1].get("id")
+    return str(run_id) if run_id else None
+
+
+def main() -> int:
+    if os.environ.get("AUTOLABOS_VALIDATION_DOCTOR_PATTERN_SELFTEST", "") == "1":
+        return run_doctor_pattern_selftest()
+    repo_root = Path(__file__).resolve().parents[1]
+    default_workspace = repo_root.parent / ".autolabos-validation" / "live-validation"
+    workspace = Path(os.environ.get("AUTOLABOS_VALIDATION_WORKSPACE", str(default_workspace))).resolve()
+    output_dir = Path(os.environ.get("AUTOLABOS_VALIDATION_PREFLIGHT_OUT", str(repo_root / "outputs" / "live-validation-preflight"))).resolve()
+    brief_path = os.environ.get("AUTOLABOS_VALIDATION_BRIEF", "briefs/live-validation-brief.md")
+    dist_main = repo_root / "dist" / "cli" / "main.js"
+    timeout = float(os.environ.get("AUTOLABOS_VALIDATION_START_TIMEOUT_SEC", "1800"))
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    if not workspace.exists():
+        print(f"FAIL: workspace does not exist: {workspace}")
+        return 1
+    if not (workspace / brief_path).exists():
+        print(f"FAIL: brief does not exist in workspace: {brief_path}")
+        return 1
+    if not dist_main.exists():
+        print(f"FAIL: expected built CLI at {dist_main}; run npm run build first")
+        return 1
+
+    env = os.environ.copy()
+    env["COLUMNS"] = "220"
+    env["LINES"] = "40"
+
+    master_fd, slave_fd = pty.openpty()
+    proc = subprocess.Popen(
+        ["node", str(dist_main)],
+        cwd=str(workspace),
+        env=env,
+        stdin=slave_fd,
+        stdout=slave_fd,
+        stderr=slave_fd,
+        preexec_fn=os.setsid,
+        close_fds=True,
+    )
+    os.close(slave_fd)
+
+    buffer_text = ""
+    try:
+        buffer_text = wait_for(
+            master_fd,
+            r"(Research Brief workflow is ready|Start with /new to create a Research Brief\.|Add steering, or wait for the next (?:run or )?approval\.|collect_papers pending)",
+            40,
+            buffer_text,
+        )
+        send_line(master_fd, "/doctor")
+        buffer_text = wait_for(master_fd, DOCTOR_CHECK_PATTERN, 60, buffer_text)
+        buffer_text = wait_for(master_fd, DOCTOR_HARNESS_PATTERN, 60, buffer_text)
+        send_line(master_fd, f"/brief start {brief_path}")
+        buffer_text = wait_for(master_fd, r"Starting research from brief:", 40, buffer_text)
+        buffer_text = wait_for(master_fd, r"Created run ", 180, buffer_text)
+        run_id = latest_run_id(workspace)
+        buffer_text = wait_for(master_fd, r"Auto-starting research for ", 180, buffer_text)
+        buffer_text = wait_for(master_fd, STOP_PATTERN, timeout, buffer_text)
+        send_line(master_fd, "/quit")
+        buffer_text = wait_for(master_fd, r"Bye", 20, buffer_text)
+        try:
+            proc.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            pass
+    finally:
+        if proc.poll() is None:
+            try:
+                os.killpg(proc.pid, signal.SIGTERM)
+            except Exception:
+                pass
+        try:
+            proc.wait(timeout=5)
+        except Exception:
+            proc.kill()
+        try:
+            os.close(master_fd)
+        except OSError:
+            pass
+
+    run_id = latest_run_id(workspace)
+    output_path = output_dir / "live-validation-start-output.txt"
+    run_id_path = output_dir / "live-validation-run-id.txt"
+    output_path.write_text(buffer_text, encoding="utf-8")
+    if run_id:
+        run_id_path.write_text(run_id + "\n", encoding="utf-8")
+    print(f"PASS: Validation live run started and reached first stop; run_id={run_id or 'unknown'}")
+    print(f"Output: {output_path}")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

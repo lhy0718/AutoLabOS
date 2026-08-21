@@ -1,0 +1,276 @@
+# Paper Quality Bar (Structural + Evidence Discipline)
+
+This document captures minimum quality requirements around `write_paper` outputs.
+
+It distinguishes between:
+- paper-shaped draft
+- system validation note
+- research memo
+- paper-ready experimental manuscript
+
+A successful paper build is not automatically a paper-ready manuscript.
+
+## 1) Structural artifact requirements
+When `write_paper` succeeds:
+- `paper/main.tex` must exist.
+- `paper/references.bib` must exist.
+- `paper/evidence_links.json` must exist.
+- `paper/paper_readiness.json` should exist.
+- `paper/paper_critique.json` must exist (post-draft critique artifact).
+- `paper/claim_evidence_table.json` should exist when major claims are present.
+- A measured and valid `figure_audit/figure_audit_summary.json` must exist
+  before manuscript promotion; missing, malformed, or intentionally ablated
+  figure audit evidence fails closed.
+- A valid, exact-gate-bound `ModelReviewBundle` must be supplied when multi-agent review is requested or the target is paper-scale.
+
+## 2) Critique artifact requirements
+The structured critique artifact (`paper_critique.json`) is emitted at two stages:
+- `review/paper_critique.json` at `stage=pre_draft_review` (before drafting)
+- `paper/paper_critique.json` at `stage=post_draft_review` (after drafting)
+
+Each critique artifact must include:
+- `manuscript_type`: one of `system_validation_note`, `research_memo`, `paper_scale_candidate`, `paper_ready`, `blocked_for_paper_scale`
+- `overall_decision`: one of `advance`, `repair_then_retry`, `backtrack_to_implement`, `backtrack_to_design`, `backtrack_to_hypotheses`, `pause_for_human`
+- `blocking_issues` and `non_blocking_issues` arrays with actionable issue objects
+- Category scores for 10 quality dimensions
+- Upstream deficit flags: `needs_additional_experiments`, `needs_additional_statistics`, `needs_additional_related_work`, `needs_design_revision`
+
+## 3) Two-stage gating discipline
+`write_paper completed` is NOT equivalent to `paper_ready`.
+
+### Pre-draft gate (review)
+`review` emits a pre-draft critique before allowing progression to `write_paper`.
+If the evidence package is insufficient, `review` recommends backtrack instead of advance.
+When a governed brief declares a minimum evidence floor, `review` should also honor the brief's paper ceiling instead of allowing a `research_memo`-grade run to drift into drafting.
+
+For paper-scale or explicitly requested multi-agent review, Codex plugin orchestration first binds the exact deterministic `A0` gate, including its audited-input hashes, then runs the independent specialist and meta-review protocol in `docs/model-review-protocol.md`. The CLI accepts the resulting sidecar and verifies its structure and hashes. All specialist findings remain in the sidecar, while only findings adopted by the `A2` meta reviewer enter `ReviewReport`, readiness, and repair targets. The meta review may preserve or add blockers and may lower readiness, but it cannot clear an `A0` blocker or change the deterministic claim ceiling.
+
+### Post-draft critique (write_paper)
+After drafting, `write_paper` emits a post-draft critique that can:
+- Confirm `paper_ready` status if the manuscript is strong
+- Recommend `repair_then_retry` for writing/style-only issues
+- Recommend upstream backtrack for evidence/design/experiment deficits
+
+### Write-paper entry gate
+`write_paper` should fail fast before drafting when either of the following is already known:
+- the pre-draft critique classifies the run below `paper_scale_candidate`
+- the brief-governed evidence assessment says minimum acceptable evidence was not met
+- the review input, assurance, or output handoff no longer matches the exact bytes approved by `review`
+
+In that case the correct action is upstream repair/backtrack, not spending drafting or PDF-compilation effort on a manuscript that should still be blocked.
+
+### Page-budget semantics
+`write_paper` should treat page budgets as explicit targets/floors, not as an implicit upper cap:
+
+- brief-derived main-body page targets are used for writing budgets
+- brief-derived minimum main-body pages are checked after LaTeX build
+- template-derived layout hints can adjust appendix format and word-budget estimation, but they do not replace the evidence bar
+
+## 4) Template structure and manuscript critique
+When a manuscript template is present, AutoLabOS uses it for structure and layout hints:
+- preamble
+- document class
+- section order
+- column layout
+- appendix-format defaults
+
+The critique system no longer introduces a separate style-target layer on top of the template.
+Template handling is structural. Manuscript gating remains evidence- and quality-driven.
+
+## 2) Evidence linkage sanity
+`paper/evidence_links.json` must be structurally useful:
+- contains a non-empty `claims` array when claims are present
+- each major claim entry includes:
+  - non-empty `claim_id`
+  - non-empty statement text
+  - at least one concrete evidence or citation reference
+- reject obviously empty placeholder mappings
+  - blank
+  - `TODO`
+  - `TBD`
+  - `placeholder`
+  - `unknown`
+
+## 3) Claim-evidence table expectation
+For papers that make experimental claims, `paper/claim_evidence_table.json` should map each major claim to:
+- evidence source type
+  - literature
+  - experiment
+  - qualitative observation
+  - limitation
+- artifact or citation reference
+- confidence / strength level
+- downgrade note when evidence is weak
+
+If the manuscript makes claims that cannot be mapped back to evidence,
+the review stage should block paper-ready status.
+
+An evidence reference counts only when it resolves inside the gate's frozen
+review inventory. Exported claim status is canonical: a scorer-level
+`unsupported` or `blocked` decision cannot be overwritten by a more
+optimistic declared source status. When the deterministic ceiling is
+`research_memo_without_quantitative_claims`, quantitative assertions in
+results, evaluation, experiments, findings, validation, analysis, or study
+sections block manuscript promotion until they are removed or bound to
+recomputable evidence.
+
+A prospectively blocked claim is reported separately from an affirmative
+unsupported manuscript claim. It does not inflate the unsupported-claim or
+claim-violation count, but its declared missing-evidence requirements continue
+to block promotion until verified.
+
+## 4) Review packet handoff discipline
+Before drafting, review output should be structurally complete:
+- review packet has core sections (`readiness`, `checks`, `suggested_actions`)
+- decision and revision artifacts are present when decisioning is active
+- `review/minimum_gate.json` includes reviewer-grade paper-scale diagnostics when evidence is underpowered
+- `review/node_strengthening_recommendations.json` maps those diagnostics to the upstream node that should be strengthened
+- `ReviewReport.reviewer_assurance` records `A0_deterministic` or a bundle-hash-bound `A2_model_conservative` panel, its adjudication policy, raw/adjudicated finding counts, and `can_promote=false`, `can_downgrade=true`, and `human_authority=false`
+- readiness state explicitly distinguishes:
+  - `system_validation_note`
+  - `research_memo`
+  - `paper_scale_candidate`
+  - `paper_ready`
+  - `blocked_for_paper_scale`
+
+## Model-review gate for paper-scale work
+
+A valid `ModelReviewBundle` must contain five independently executed initial
+reviews with these roles:
+
+- `claim_evidence`: verifies claim scope, artifact and citation support, and the
+  applicable claim ceiling
+- `methodology`: checks design validity, controls, comparators, confounds, and
+  interpretation boundaries
+- `statistics`: checks estimands, sample adequacy, uncertainty, repeated trials,
+  procedures, and quantitative reporting
+- `reproducibility`: checks executable artifacts, environment and data lineage,
+  seeds, logs, manifests, and rerun sufficiency
+- `adversarial`: develops the strongest plausible rejection case and searches
+  for leakage, contradictions, hidden assumptions, and unsupported promotion
+
+All five roles use the strongest available frontier model and highest available
+reasoning tier under active runtime policy. They receive the same immutable
+inputs and exact `GateReport` hash, and their initial outputs are not shared.
+Each records model, provider, reasoning, and execution provenance.
+
+A separate meta reviewer runs only after the five outputs are validated and
+hashed. It binds every output hash, preserves all material disagreements, and
+emits every adopted finding and at most an `A2` conservative disposition. Raw
+specialist findings stay in `ModelReviewBundle`; only meta findings are
+projected into the final report. Missing roles, provenance,
+isolation, exact gate binding, or meta reconciliation are paper-scale blockers.
+
+Model reviews and human reviews are separate artifacts. A model review must not
+set human identity, attestation, approval, or legal/redistribution permission.
+Never generate the human review or final approval.
+
+### Evaluation provenance and claim ceiling
+
+Absence of human adjudication is not itself a paper blocker when the benchmark
+uses `controlled_deterministic_fault_injection` and the gate verifies a
+frozen fault registry, registry-derived gold, an independently implemented
+artifact-replay oracle, hash-bound development/test suites, and a source- and
+fault-family-disjoint split. Such a manuscript must keep
+`claim_ceiling=registered_fault_families_only` and state that external
+naturalistic validation was not run.
+
+Human evidence remains mandatory when a claim depends on naturalistic labels,
+human identity or attestation, external curation judgment, legal authority, or
+redistribution permission. Controlled evidence must never be relabeled as
+human-reviewed evidence.
+
+## 5) Paper-ready minimum gate
+For a manuscript to be marked `paper_ready=true`, all of the following should hold:
+
+1. The paper states a clear research question.
+2. Related work is more than shallow title/abstract paraphrase.
+3. The method section corresponds to actual executed work.
+4. The experiment section identifies task/dataset/metric.
+5. At least one baseline or comparator is explicit.
+6. At least one quantitative result or compact result table is present.
+7. Major claims are traceable to evidence.
+8. Limitations or failure modes are stated.
+9. The paper does not center internal workflow validation as the main scientific contribution.
+10. Any brief-governed minimum evidence requirement (for example repeated runs, baseline count, or uncertainty reporting) has been satisfied.
+11. The experiment evidence is not just a single thin run; it includes repeated trials or explicit robustness/uncertainty reporting.
+12. Positive headline gains are not explainable by a single changed evaluation example.
+13. Comparative claims satisfy the declared independent-unit, repetition, and uncertainty requirements or are explicitly downgraded.
+14. Evaluation sample sizes are large enough for the claimed genre, not merely enough for a smoke or preflight run.
+15. A measured figure audit confirms that figures, result tables, captions, and underlying evidence are mutually consistent.
+
+## 6) Automatic downgrade / block conditions
+The manuscript must not be labeled `paper_ready` when any of the following is true:
+- no executed real-system comparison on either an externally grounded task or
+  a certified controlled benchmark
+- no baseline or comparator
+- no result table or recoverable quantitative comparison
+- claims exceed evidence
+- related work is too shallow to support positioning
+- the main contribution is only pipeline validation rather than a falsifiable
+  comparison on an external task or certified controlled benchmark
+- the evidence is only a single thin run with no repeated-trial or robustness support
+- the headline result is at the minimum observable quantum without a defensible resolution-aware analysis
+- independent repetition, cluster coverage, or another declared uncertainty requirement is missing
+- the executed budget is only sufficient for pipeline validation while the manuscript claims an empirical effect
+- the manuscript is mostly generated filler around weak artifacts
+- a governed brief explicitly required stronger evidence than the run actually produced
+- figure audit evidence is missing, malformed, intentionally ablated, or reports a blocking figure/result/caption mismatch
+- quantitative manuscript assertions remain under a deterministic
+  non-quantitative claim ceiling
+
+In such cases, downgrade to one of:
+- `system_validation_note`
+- `research_memo`
+- `paper_scale_candidate`
+- `blocked_for_paper_scale`
+
+## 7) Claim strength and evidence discipline
+- Do not overstate claims beyond available artifacts.
+- If evidence is weak or incomplete, downgrade claim language explicitly.
+- Do not fabricate statistics, confidence intervals, or reproducibility claims.
+- Do not convert runtime completion into scientific success.
+- Do not present workflow traces as if they were external experimental findings.
+
+## 8) Related-work discipline
+Related work should support positioning, not just decorate the paper.
+At minimum:
+- the paper should identify the most relevant comparator family
+- the paper should position the proposed experiment against concrete prior approaches
+- related work should not be purely metadata-level when stronger evidence is available
+- if full-text grounding is limited, the manuscript should say so explicitly
+- for method-centered papers, canonical method papers must be collected or the review gate should record a related-work gap
+- model citation review may mark a claim supported only after directly reading hash-bound full text and recording a precise page, section, table, figure, or paragraph location
+- model license screening may bind direct public license evidence, but absent such evidence the source remains `local_only` or `uncertain` and redistribution permission remains unresolved
+
+## 9) Method/result consistency
+The method and result sections must agree on what was actually run.
+Do not claim:
+- ablations that were not executed
+- baseline comparisons that do not exist
+- robustness checks that were not performed
+- statistical procedures that were not run
+
+## 10) Limitation discipline
+A paper-ready manuscript must include limitations.
+Typical limitations include:
+- small dataset scope
+- restricted compute budget
+- shallow comparator set
+- non-significant improvement
+- sensitivity to prompts or implementation details
+- incomplete literature coverage
+
+## 11) Why this bar exists
+Paper generation is the easiest place for weak evidence to become inflated prose.
+This bar exists to preserve:
+- honest scientific writing
+- traceable claims
+- clear downgrade paths
+- operator trust in manuscript quality
+
+## 12) Intended strictness
+- Strict on structural artifact presence.
+- Strict on claim→evidence linkage.
+- Strict on blocking obviously underpowered “paper-ready” labels.
+- Conservative on stylistic judgments.

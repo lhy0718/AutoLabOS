@@ -1,0 +1,212 @@
+# Codex Plugin Governance Direction
+
+AutoLabOS should present itself publicly as a Codex-native research governance layer, not as another monolithic fully automated scientist.
+
+## Landscape Basis
+
+The `worldbench/awesome-ai-auto-research` landscape groups current systems into idea generation, novelty assessment, literature retrieval, survey generation, deep research agents, code and experiment execution, reproducibility assessment, writing/review/rebuttal, paper-to-media conversion, fully automated research systems, and evolutionary self-improvement.
+
+That landscape is crowded at the execution layer. AutoLabOS should therefore specialize in the layer that stays valuable across those systems: artifact intake, evidence gates, claim ceilings, review discipline, reproducibility checks, and node-level self-improvement.
+
+Source: https://github.com/worldbench/awesome-ai-auto-research
+
+## Public Role
+
+Primary surface: Codex plugin.
+
+AutoLabOS role: governed research harness.
+
+Execution role: Codex or an external agent may run code, search, write, or execute experiments.
+
+Standalone role: the existing TUI/web workflow remains a reference implementation, compatibility shell, and live-validation path.
+
+Public contract: artifact and gate schema, not a fixed promise that every run becomes a paper.
+
+## Intent Classes
+
+### Executable CLI Intents
+
+- `research:new`: create or repair a governed research brief.
+- `research:audit`: audit a run or external artifact bundle as untrusted evidence.
+- `research:review`: run deterministic gates and bound model review for paper readiness, claim ceilings, downgrade class, and upstream repair targets.
+- `research:improve`: map failures to the smallest node-local prompt, skill,
+  validator, policy, or runtime strengthening.
+- `research:pack`: export a traceable paper-readiness bundle and independently verify it before distribution.
+
+These intents are backed by `autolabos research
+<new|audit|review|improve|pack|verify-pack|verify-milestone>` through the
+plugin bridge.
+
+### Workflow-Native Intent
+
+`research:discover` explores paper topics within the fixed 10-node reference
+workflow. It is not a CLI-backed command and does not add a top-level node.
+Discovery starts only from a complete `ResearchBrief`; an incomplete brief is
+repaired through `research:new` before the workflow intent begins.
+
+The intent occupies the existing node sequence:
+
+`collect_papers -> analyze_papers -> generate_hypotheses -> design_experiments`
+
+- `collect_papers` builds a literature corpus bounded by the brief.
+- `analyze_papers` emits `ResearchGapMap` from evidence-linked limitations and
+  preserves supported versus provisional epistemic status.
+- `generate_hypotheses` emits `TopicPortfolio` with 5-7 candidates spanning at
+  least 3 distinct nonempty evidence-axis clusters.
+- Each portfolio candidate records closest-prior non-overlap, the
+  strongest-baseline absorption objection, a primary metric with explicit
+  unit and numeric scale, a structured delta-versus-reference effect criterion, a local budget,
+  a falsifier, a kill signal, and minimum publishable evidence.
+- `design_experiments` validates the portfolio and emits
+  `TopicProbeDecision` plus a hash-bound `ActiveTopicProbeContract` for exactly
+  one authorized candidate.
+
+The terminal authority is closed-chain probe authorization. It permits a
+bounded execution probe to continue through the existing downstream workflow;
+it is not final topic selection, research completion, or paper readiness. A
+blocked decision routes back to `generate_hypotheses`.
+
+## Governance Artifact Contract
+
+- `ResearchBrief`: execution contract with baseline, evidence floor, disallowed shortcuts, and failure conditions.
+- `EvidenceBundle`: collected literature, run outputs, metrics, logs, drafts, and provenance imported as evidence candidates, with available input bytes bound by portable path, SHA-256, and byte length.
+- `GateReport`: deterministic and structured findings about traceability, missing evidence, and done-condition drift, transitively bound to those audited inputs through its evidence-bundle ID and explicit input bindings.
+- `ReviewReport`: claim-evidence alignment, readiness class, downgrade decision, and repair target.
+- `MetaHarnessPatchPlan`: smallest safe node, prompt, skill, validator, policy,
+  or runtime strengthening plan with rollback expectations.
+- `PaperReadinessBundle`: portable public bundle with provenance, claim evidence, downgrade decisions, limitations, and an explicit list of source copies redacted for public portability.
+
+## Workflow Artifact Contract
+
+- `ResearchGapMap`: evidence-linked literature-gap candidates emitted within
+  `analyze_papers`, including source support and epistemic status.
+- `TopicPortfolio`: bounded topic candidates emitted within
+  `generate_hypotheses`, including portfolio breadth and complete
+  falsification, budget, prior-work, comparator-objection, and
+  minimum-publishable-evidence contracts.
+- `TopicProbeDecision`: the `design_experiments` authorization or backtrack
+  decision bound to the validated portfolio. It cannot represent topic
+  selection or paper readiness.
+- `ActiveTopicProbeContract`: the hash-bound active-candidate measurement
+  contract. It carries the metric, unit, scale, direction, comparator, structured
+  effect criterion, deferred candidate IDs, and bounded-probe evidence ceiling.
+
+## Projection Artifact Contract
+
+- `VenueViabilityReport`: the deterministic active-candidate projection of a
+  validated bounded-probe outcome. It exposes continue, pivot, kill, or blocked,
+  keeps the current evidence ceiling at screening-only, and cannot assess
+  acceptance likelihood or grant paper-scale authority. It cannot authorize a
+  confirmatory transition, but an unsupported candidacy must veto one.
+
+## Sidecar And Operational Artifacts
+
+- `ModelReviewBundle`: exact-gate-bound independent specialist reviews,
+  model/provider/reasoning/execution provenance, preserved disagreement, and
+  conservative meta reconciliation.
+- `PluginDependencyReport`: operational-only report for a missing or incompatible plugin dependency; it cannot represent research evidence or substitute for a `GateReport`.
+
+## Decision Authority
+
+- `A0 deterministic` owns schema, hash, inventory, evidence-floor, blocker, and maximum claim/readiness-ceiling checks.
+- `A1 model advisory` provides specialist critique, screening, uncertainty, and repair recommendations without changing deterministic gates.
+- `A2 model conservative` reconciles model findings and may add blockers, lower readiness within the deterministic ceiling, or route work upstream. It cannot remove an `A0` blocker, change or raise the deterministic ceiling, create external evidence, create human attestation, or create legal or redistribution permission.
+- `A3 human authority` is a separately recorded identified human review, final approval, attestation, or authorized legal/redistribution decision. It is never inferred from a model artifact.
+
+New or corrected evidence must be bound and rerun through `A0`; later authority does not rewrite deterministic gate history.
+
+## Model Review Execution
+
+When the user requests multi-agent review, or when `research:review` evaluates a paper-scale target, the plugin must use the strongest available frontier model and highest available reasoning tier under active provider/runtime policy. It records requested and effective routing rather than silently substituting a weaker route.
+
+Five `A1` reviewers run in parallel with independent initial context:
+`claim_evidence`, `methodology`, `statistics`, `reproducibility`, and
+`adversarial`. They receive the identical closed inventory: the exact
+`GateReport`, exact `EvidenceBundle`, and every required
+`GateReport.input_bindings` path. Initial outputs are not shared with peers,
+and every output records model, provider, reasoning, and execution provenance.
+
+After all five outputs pass structural and hash validation, a separate meta reviewer binds the same gate and every initial output hash. It preserves disagreements, records unresolved positions, and emits at most an `A2` conservative reconciliation. Missing roles, provenance, isolation, exact binding, or reconciliation block model-based paper-scale promotion.
+
+The strict `ModelReviewBundle` preserves every specialist record. Only findings
+explicitly adopted by the meta reviewer are projected into `ReviewReport`,
+readiness, and repair targets, preventing repeated specialist observations from
+becoming duplicate final blockers. Reviewer assurance records both raw
+specialist and adjudicated finding counts.
+
+Model review is a separate artifact, not a human review surrogate. Never generate the human review or final approval. Candidate, reference, and license material may receive explicitly model-authored screening or adjudication, but human identity and attestation fields remain unset. Citation support requires direct reading of bound full text and a precise evidence location. License screening requires direct public license evidence; otherwise status remains `local_only` or `uncertain`, with no inferred redistribution permission.
+
+`docs/model-review-protocol.md` is the canonical `ModelReviewBundle` field and verification contract.
+
+## Adapter Strategy
+
+External systems should be adapters, not dependencies. Literature tools, deep research agents, experiment runners, reproducibility benchmarks, review agents, and fully automated research systems may provide artifacts, but those artifacts remain untrusted until AutoLabOS gates classify them.
+
+Adapter categories:
+
+- literature retrieval and survey synthesis
+- deep research report generation
+- experiment execution and orchestration
+- code reproduction and benchmark assessment
+- paper review and rebuttal assistance
+- candidate, reference, and license model screening
+- fully automated research-system output import
+
+No adapter may skip baseline requirements, claim-evidence mapping, reproducibility checks, or paper-readiness review.
+
+## Executable Adapter
+
+The plugin ships a thin bridge for `autolabos research
+<new|audit|review|improve|pack|verify-pack|verify-milestone>`. The bridge checks that the AutoLabOS CLI is
+available, delegates execution without a shell, and emits a blocking
+`PluginDependencyReport` when the dependency is missing. The CLI owns deterministic
+artifact validation and reuse of the existing brief, audit, review, and
+meta-harness logic.
+
+The bridge does not expose `research:discover`. Topic discovery is entered as
+a workflow-native intent and remains inside `collect_papers`,
+`analyze_papers`, `generate_hypotheses`, and `design_experiments`.
+
+`research review` accepts an optional `--model-review
+<model-review-bundle.json>` sidecar. The sidecar becomes required by policy for
+paper-scale or explicitly requested multi-agent review and remains subordinate
+to the required deterministic `--gate` artifact.
+
+All normalized artifacts use schema version `1.0`. Paths in public artifacts
+are workspace-relative or placeholder-based, and `research:improve` defaults
+to `plan_only`. Packaging never rewrites source evidence: it excludes copied
+artifacts containing private paths or credential assignments, redacts
+run-specific identifiers only in public copies, records those copied paths in
+portability metadata, and hashes the resulting public bytes.
+`research verify-pack` then treats the exported directory as untrusted input,
+requires a closed regular-file inventory, recomputes every byte count and
+SHA-256 digest, and rechecks the gate, review, readiness, and claim-ceiling
+bindings without creating a new top-level command intent.
+
+External intake copies only allowlisted artifacts and records SHA-256 and byte
+length for each copied file. Fresh audits propagate those bindings into the
+`EvidenceBundle` and `GateReport`; changing manuscript or evidence bytes
+invalidates prior model review and requires a fresh gate and panel.
+
+`research verify-milestone` is likewise a cross-intent verification mode. It
+keeps a long-running objective open until every declared hash and assertion
+passes, and groups unmet requirements by their owning workflow node.
+
+## Self-Dogfood Loop
+
+The plugin must be able to inspect its own public contract as an untrusted artifact bundle. Maintainers should run `npm run plugin:dogfood` after changing the plugin manifest, skill text, marketplace entry, governance contract, or plugin helper scripts.
+
+Maintainers should also run `npm run plugin:doctor` when checking whether the installed Codex plugin cache matches the repo-local plugin contract. The default doctor report is diagnostic; `npm run plugin:doctor -- --strict` should be used for CI or release checks that must fail on cache drift. On a workstation with Codex installed, `npm run plugin:discovery-check` additionally verifies that `codex plugin list` reports the plugin as installed and enabled at the manifest version and repository source before applying the strict cache and skill checks. `npm run validate:plugin-bridge` runs a deterministic bridge chain suitable for CI, while `npm run validate:plugin-bridge:local` executes the same acceptance scenario through the installed cache bridge and must remain a workstation-only gate. `npm run validate:plugin-faults` covers required blocking paths, `npm run validate:plugin-hermetic` proves an isolated cache lifecycle, and `npm run validate:plugin-operations` aggregates the CI gates without promoting partial success; its `:local` variant adds installed bridge and discovery checks. `npm run plugin:sync-cache` is dry-run by default and should be run with `-- --write` only when intentionally refreshing a local Codex installation. `npm run plugin:release-check` bundles contract, dogfood, strict doctor, pack, and public-surface hygiene checks for release readiness. Cache drift means the plugin should be reinstalled or the Codex thread restarted before relying on installed skill behavior.
+
+The dogfood report is a `research:improve` surface: failed checks map to the smallest plugin-local repair target and must not be treated as broad workflow redesign requests. A passing report proves only that the plugin contract is internally coherent; it does not prove paper-readiness or research completion.
+
+## Non-Goals
+
+- Do not replace the governed workflow with an unbounded orchestrator.
+- Do not expose `research:discover` as a CLI subcommand or add a discovery node.
+- Do not treat probe authorization as final topic selection or paper readiness.
+- Do not encode one historical experiment in public source, tests, docs, or plugin examples.
+- Do not treat external agent success as research success.
+- Do not treat compiled manuscripts as paper-ready without review gates.
+- Do not present `A1` or `A2` model output as `A3` human review, final approval, attestation, or legal/redistribution permission.
+- Do not let model reconciliation erase deterministic blockers, raise the deterministic ceiling, or hide reviewer disagreement.

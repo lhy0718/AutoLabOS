@@ -1,0 +1,2994 @@
+import { mkdtempSync, rmSync, promises as fs } from "node:fs";
+import os from "node:os";
+import path from "node:path";
+
+import { afterEach, describe, expect, it, vi } from "vitest";
+
+import { ensureScaffold, resolveAppPaths } from "../src/config.js";
+import { InMemoryEventStream, PersistedEventStream } from "../src/core/events.js";
+import { RunStore } from "../src/core/runs/runStore.js";
+import { CheckpointStore } from "../src/core/stateGraph/checkpointStore.js";
+import { StateGraphRuntime } from "../src/core/stateGraph/runtime.js";
+import { GraphNodeHandler, GraphNodeRegistry } from "../src/core/stateGraph/types.js";
+import { FailureMemory, buildErrorFingerprint } from "../src/core/experiments/failureMemory.js";
+import type { GovernanceBenchmarkConditionName } from "../src/core/benchmark/governanceCondition.js";
+import { GRAPH_NODE_ORDER, GraphNodeId, RunRecord } from "../src/types.js";
+import { readJsonFile } from "../src/utils/fs.js";
+import { GovernancePolicy } from "../src/governance/policyTypes.js";
+import { CodexOAuthCompletionError } from "../src/integrations/codex/oauthCompletionError.js";
+import { CodexOAuthResponsesTextClient } from "../src/integrations/codex/oauthResponsesTextClient.js";
+
+const ORIGINAL_CWD = process.cwd();
+const tempDirs: string[] = [];
+
+afterEach(() => {
+  process.chdir(ORIGINAL_CWD);
+  while (tempDirs.length > 0) {
+    const dir = tempDirs.pop();
+    if (dir) {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  }
+});
+
+class Registry implements GraphNodeRegistry {
+  constructor(private readonly handlers: Partial<Record<GraphNodeId, GraphNodeHandler>>) {}
+
+  get(nodeId: GraphNodeId): GraphNodeHandler {
+    const handler = this.handlers[nodeId];
+    if (handler) {
+      return handler;
+    }
+
+    return {
+      id: nodeId,
+      execute: async () => ({
+        status: "success",
+        summary: `${nodeId} ok`,
+        needsApproval: true,
+        toolCallsUsed: 1
+      })
+    };
+  }
+
+  list(): GraphNodeHandler[] {
+    return GRAPH_NODE_ORDER.map((node) => this.get(node));
+  }
+}
+
+async function setup(registry: GraphNodeRegistry, opts?: { persistEvents?: boolean }) {
+  const cwd = mkdtempSync(path.join(os.tmpdir(), "autolabos-runtime-"));
+  tempDirs.push(cwd);
+  process.chdir(cwd);
+
+  const paths = resolveAppPaths(cwd);
+  await ensureScaffold(paths);
+
+  const store = new RunStore(paths);
+  const checkpointStore = new CheckpointStore(paths);
+  const eventStream = opts?.persistEvents
+    ? new PersistedEventStream(paths.runsDir)
+    : new InMemoryEventStream();
+  const runtime = new StateGraphRuntime(store, registry, checkpointStore, eventStream);
+  return { paths, store, checkpointStore, runtime, eventStream };
+}
+
+async function readAllWorkspaceFiles(root: string): Promise<string> {
+  const entries = await fs.readdir(root, { withFileTypes: true });
+  const contents = await Promise.all(entries.map(async (entry) => {
+    const target = path.join(root, entry.name);
+    if (entry.isDirectory()) {
+      return readAllWorkspaceFiles(target);
+    }
+    if (entry.isFile()) {
+      return (await fs.readFile(target)).toString("utf8");
+    }
+    return "";
+  }));
+  return contents.join("\n");
+}
+
+async function setupWithOptions(
+  registry: GraphNodeRegistry,
+  options?: {
+    approvalMode?: "manual" | "minimal" | "hybrid";
+    budgetGuardUsd?: number;
+    benchmarkCondition?: GovernanceBenchmarkConditionName;
+    governancePolicy?: GovernancePolicy;
+    evaluateGovernanceAction?: any;
+  }
+) {
+  const cwd = mkdtempSync(path.join(os.tmpdir(), "autolabos-runtime-"));
+  tempDirs.push(cwd);
+  process.chdir(cwd);
+
+  const paths = resolveAppPaths(cwd);
+  await ensureScaffold(paths);
+
+  const store = new RunStore(paths);
+  const checkpointStore = new CheckpointStore(paths);
+    const runtime = new StateGraphRuntime(store, registry, checkpointStore, new InMemoryEventStream(), options);
+  return { paths, store, checkpointStore, runtime };
+}
+
+function preparePendingDesignBacktrack(run: RunRecord): void {
+  run.currentNode = "analyze_results";
+  run.graph.currentNode = "analyze_results";
+  run.status = "paused";
+  run.graph.researchCycle = 2;
+
+  const sourceNodeIndex = GRAPH_NODE_ORDER.indexOf("analyze_results");
+  for (const node of GRAPH_NODE_ORDER.slice(0, sourceNodeIndex + 1)) {
+    run.graph.nodeStates[node].status = "completed";
+  }
+  run.graph.nodeStates.analyze_results.status = "needs_approval";
+  run.graph.retryCounters.design_experiments = 1;
+  run.graph.rollbackCounters.run_experiments = 1;
+  run.graph.pendingTransition = {
+    action: "backtrack_to_design",
+    sourceNode: "analyze_results",
+    targetNode: "design_experiments",
+    reason: "The available evidence requires a revised design.",
+    confidence: 0.9,
+    autoExecutable: false,
+    evidence: ["The declared comparison remains incomplete."],
+    suggestedCommands: [],
+    generatedAt: new Date().toISOString()
+  };
+}
+
+function preparePendingSuccessorDelegation(run: RunRecord): void {
+  run.currentNode = "review";
+  run.graph.currentNode = "review";
+  run.status = "paused";
+  for (const node of GRAPH_NODE_ORDER.slice(0, GRAPH_NODE_ORDER.indexOf("review"))) {
+    run.graph.nodeStates[node].status = "completed";
+  }
+  run.graph.nodeStates.review.status = "needs_approval";
+  run.graph.nodeStates.review.note = "A governed successor handoff is ready.";
+  run.graph.pendingTransition = {
+    action: "delegate_successor",
+    sourceNode: "review",
+    targetNode: "write_paper",
+    reason: "Continue in a separately governed successor run.",
+    confidence: 0.99,
+    autoExecutable: true,
+    evidence: ["The successor handoff is complete and independently auditable."],
+    suggestedCommands: ["/agent status"],
+    generatedAt: new Date().toISOString()
+  };
+}
+
+describe("StateGraphRuntime", () => {
+  it("blocks every runtime entry point for a delegated run with a failed promotion lease", async () => {
+    const { store, runtime } = await setup(new Registry({}));
+    const run = await store.createRun({
+      title: "Blocked delegated run",
+      topic: "topic",
+      constraints: [],
+      objectiveMetric: "metric"
+    }, {
+      executionRole: "delegated_once",
+      promotionLineage: {
+        schemaVersion: 1,
+        relation: "topic_probe_confirmatory",
+        parentRunId: "fixture-parent-failed",
+        parentResearchCycle: 1,
+        outcomeContentSha256: "a".repeat(64),
+        receiptContentSha256: "b".repeat(64)
+      }
+    });
+    vi.spyOn(
+      store.getPromotionStore(),
+      "getExecutionState"
+    ).mockReturnValue({
+      childRunId: run.id,
+      status: "failed",
+      fenceToken: 1,
+      terminalDetail: "post-claim validation failed"
+    });
+
+    await expect(runtime.start(run.id)).rejects.toThrow(
+      "delegated_run_execution_not_authorized:start:failed"
+    );
+    await expect(runtime.resume(run.id)).rejects.toThrow(
+      "delegated_run_execution_not_authorized:resume:failed"
+    );
+    await expect(runtime.step(run.id)).rejects.toThrow(
+      "delegated_run_execution_not_authorized:step:failed"
+    );
+  });
+
+  it("blocks a delegated run after its running promotion lease expires", async () => {
+    const { store, runtime } = await setup(new Registry({}));
+    const run = await store.createRun({
+      title: "Expired delegated run",
+      topic: "topic",
+      constraints: [],
+      objectiveMetric: "metric"
+    }, {
+      executionRole: "delegated_once",
+      promotionLineage: {
+        schemaVersion: 1,
+        relation: "topic_probe_repeat",
+        parentRunId: "fixture-parent-expired",
+        parentResearchCycle: 1,
+        outcomeContentSha256: "c".repeat(64),
+        receiptContentSha256: "d".repeat(64)
+      }
+    });
+    vi.spyOn(
+      store.getPromotionStore(),
+      "getExecutionState"
+    ).mockReturnValue({
+      childRunId: run.id,
+      status: "running",
+      fenceToken: 1,
+      ownerId: "expired-owner",
+      claimedAt: new Date(0).toISOString(),
+      heartbeatAt: new Date(0).toISOString(),
+      leaseExpiresAtMs: Date.now() - 1
+    });
+
+    await expect(runtime.start(run.id)).rejects.toThrow(
+      "delegated_run_execution_not_authorized:start:expired"
+    );
+  });
+
+  it("requires the exact owner and fence credential for a running delegated lease", async () => {
+    const { store, runtime } = await setup(new Registry({}));
+    const run = await store.createRun({
+      title: "Fenced delegated run",
+      topic: "topic",
+      constraints: [],
+      objectiveMetric: "metric"
+    }, {
+      executionRole: "delegated_once",
+      promotionLineage: {
+        schemaVersion: 1,
+        relation: "topic_probe_repeat",
+        parentRunId: "fixture-parent-fenced",
+        parentResearchCycle: 1,
+        outcomeContentSha256: "e".repeat(64),
+        receiptContentSha256: "f".repeat(64)
+      }
+    });
+    const executionState = {
+      childRunId: run.id,
+      status: "running" as const,
+      fenceToken: 9,
+      ownerId: "authorized-owner",
+      claimedAt: new Date().toISOString(),
+      heartbeatAt: new Date().toISOString(),
+      leaseExpiresAtMs: Date.now() + 60_000
+    };
+    vi.spyOn(
+      store.getPromotionStore(),
+      "getExecutionState"
+    ).mockReturnValue(executionState);
+
+    await expect(runtime.start(run.id)).rejects.toThrow(
+      "delegated_run_execution_not_authorized:start:credential_mismatch"
+    );
+    expect(() => runtime.authorizeDelegatedExecution({
+      childRunId: run.id,
+      ownerId: "wrong-owner",
+      fenceToken: 9,
+      leaseDurationMs: 60_000
+    })).toThrow("delegated_run_execution_credential_invalid");
+
+    runtime.authorizeDelegatedExecution({
+      childRunId: run.id,
+      ownerId: executionState.ownerId,
+      fenceToken: executionState.fenceToken,
+      leaseDurationMs: 60_000
+    });
+    await expect(runtime.start(run.id)).resolves.toMatchObject({
+      id: run.id,
+      status: "running"
+    });
+    runtime.revokeDelegatedExecution(run.id);
+    await expect(runtime.retryNode(run.id)).rejects.toThrow(
+      "delegated_run_execution_not_authorized:retry:credential_mismatch"
+    );
+  });
+
+  it("rejects a node result when the delegated fence becomes terminal during execution", async () => {
+    let executionStatus: "running" | "failed" = "running";
+    const registry = new Registry({
+      collect_papers: {
+        id: "collect_papers",
+        execute: async () => {
+          executionStatus = "failed";
+          return {
+            status: "success",
+            summary: "must not be committed",
+            needsApproval: true,
+            toolCallsUsed: 1
+          };
+        }
+      }
+    });
+    const { store, runtime } = await setup(registry);
+    const run = await store.createRun({
+      title: "Fence-loss delegated run",
+      topic: "topic",
+      constraints: [],
+      objectiveMetric: "metric"
+    }, {
+      executionRole: "delegated_once",
+      promotionLineage: {
+        schemaVersion: 1,
+        relation: "topic_probe_repeat",
+        parentRunId: "fixture-parent-fence-loss",
+        parentResearchCycle: 1,
+        outcomeContentSha256: "1".repeat(64),
+        receiptContentSha256: "2".repeat(64)
+      }
+    });
+    vi.spyOn(
+      store.getPromotionStore(),
+      "getExecutionState"
+    ).mockImplementation(() => executionStatus === "running"
+      ? {
+          childRunId: run.id,
+          status: "running",
+          fenceToken: 4,
+          ownerId: "node-owner",
+          claimedAt: new Date().toISOString(),
+          heartbeatAt: new Date().toISOString(),
+          leaseExpiresAtMs: Date.now() + 60_000
+        }
+      : {
+          childRunId: run.id,
+          status: "failed",
+          fenceToken: 4,
+          ownerId: "node-owner",
+          terminalAt: new Date().toISOString(),
+          terminalDetail: "fence lost during node execution"
+        });
+    runtime.authorizeDelegatedExecution({
+      childRunId: run.id,
+      ownerId: "node-owner",
+      fenceToken: 4,
+      leaseDurationMs: 60_000
+    });
+
+    await expect(runtime.step(run.id)).rejects.toThrow(
+      "delegated_run_execution_not_authorized:node_commit:fence_lost"
+    );
+    expect(await store.getRun(run.id)).toMatchObject({
+      status: "failed",
+      latestSummary: "Delegated execution blocked: fence lost during node execution"
+    });
+  });
+
+  it("emits approval-wait before completion and completes only after approval", async () => {
+    const { store, runtime, eventStream } = await setup(new Registry({}));
+    const run = await store.createRun({
+      title: "Approval event lifecycle",
+      topic: "topic",
+      constraints: [],
+      objectiveMetric: "metric"
+    });
+
+    const waiting = await runtime.step(run.id);
+    expect(waiting.status).toBe("paused");
+    expect(waiting.graph.nodeStates.collect_papers.status).toBe("needs_approval");
+    expect(eventStream.history(20, run.id).map((event) => event.type)).toContain(
+      "NODE_AWAITING_APPROVAL"
+    );
+    expect(eventStream.history(20, run.id).map((event) => event.type)).not.toContain(
+      "NODE_COMPLETED"
+    );
+
+    const approved = await runtime.approveCurrent(run.id, { continueAfterApprove: false });
+    expect(approved.graph.nodeStates.collect_papers.status).toBe("completed");
+    expect(approved.currentNode).toBe("analyze_papers");
+    expect(eventStream.history(20, run.id).filter((event) => event.type === "NODE_COMPLETED"))
+      .toHaveLength(1);
+  });
+
+  it.each(["minimal", "manual", "hybrid"] as const)(
+    "keeps successor delegation pending in %s approval mode",
+    async (approvalMode) => {
+      const registry = new Registry({
+        review: {
+          id: "review",
+          execute: async () => ({
+            status: "success",
+            summary: "A governed successor handoff is ready.",
+            needsApproval: true,
+            toolCallsUsed: 1,
+            approvalSignal: {
+              source: "review",
+              overall_score: 10,
+              specialist_scores: [5, 5, 5]
+            },
+            transitionRecommendation: {
+              action: "delegate_successor",
+              sourceNode: "review",
+              targetNode: "write_paper",
+              reason: "Continue in a separately governed successor run.",
+              confidence: 0.99,
+              autoExecutable: true,
+              evidence: ["The successor handoff is complete and independently auditable."],
+              suggestedCommands: ["/agent status"],
+              generatedAt: new Date().toISOString()
+            }
+          })
+        }
+      });
+      const { store, runtime } = await setupWithOptions(registry, { approvalMode });
+      const run = await store.createRun({
+        title: "Governed successor handoff",
+        topic: "topic",
+        constraints: [],
+        objectiveMetric: "metric"
+      });
+      run.currentNode = "review";
+      run.graph.currentNode = "review";
+      for (const node of GRAPH_NODE_ORDER.slice(0, GRAPH_NODE_ORDER.indexOf("review"))) {
+        run.graph.nodeStates[node].status = "completed";
+      }
+      await store.updateRun(run);
+
+      const updated = await runtime.runUntilPause(run.id, {
+        stopAfterApprovalBoundary: true,
+        floorNode: "review"
+      });
+
+      expect(updated.currentNode).toBe("review");
+      expect(updated.status).toBe("paused");
+      expect(updated.graph.nodeStates.review.status).toBe("needs_approval");
+      expect(updated.graph.nodeStates.write_paper.status).toBe("pending");
+      expect(updated.graph.pendingTransition?.action).toBe("delegate_successor");
+      expect(updated.graph.transitionHistory).toEqual([]);
+    }
+  );
+
+  it.each(["minimal", "manual", "hybrid"] as const)(
+    "keeps pause_for_human terminal in %s approval mode",
+    async (approvalMode) => {
+      const registry = new Registry({
+        review: {
+          id: "review",
+          execute: async () => ({
+            status: "success",
+            summary: "Human review is required.",
+            needsApproval: true,
+            toolCallsUsed: 1,
+            approvalSignal: {
+              source: "review",
+              overall_score: 10,
+              specialist_scores: [5, 5, 5]
+            },
+            transitionRecommendation: {
+              action: "pause_for_human",
+              sourceNode: "review",
+              targetNode: "write_paper",
+              reason: "A human decision is required before proceeding.",
+              confidence: 1,
+              autoExecutable: true,
+              evidence: ["The decision requires human authority."],
+              suggestedCommands: ["/agent status"],
+              generatedAt: new Date().toISOString()
+            }
+          })
+        }
+      });
+      const { store, runtime } = await setupWithOptions(registry, { approvalMode });
+      const run = await store.createRun({
+        title: "Human review boundary",
+        topic: "topic",
+        constraints: [],
+        objectiveMetric: "metric"
+      });
+      run.currentNode = "review";
+      run.graph.currentNode = "review";
+      for (const node of GRAPH_NODE_ORDER.slice(0, GRAPH_NODE_ORDER.indexOf("review"))) {
+        run.graph.nodeStates[node].status = "completed";
+      }
+      await store.updateRun(run);
+
+      const updated = await runtime.runUntilPause(run.id, {
+        stopAfterApprovalBoundary: true,
+        floorNode: "review"
+      });
+
+      expect(updated.currentNode).toBe("review");
+      expect(updated.status).toBe("paused");
+      expect(updated.graph.nodeStates.review.status).toBe("needs_approval");
+      expect(updated.graph.nodeStates.write_paper.status).toBe("pending");
+      expect(updated.graph.pendingTransition?.action).toBe("pause_for_human");
+      expect(updated.graph.transitionHistory).toEqual([]);
+    }
+  );
+
+  it("does not approve a successor delegation through approveCurrent", async () => {
+    const { store, runtime } = await setup(new Registry({}));
+    const run = await store.createRun({
+      title: "Successor approval boundary",
+      topic: "topic",
+      constraints: [],
+      objectiveMetric: "metric"
+    });
+    preparePendingSuccessorDelegation(run);
+    await store.updateRun(run);
+    const before = await store.getRun(run.id);
+    const updateRun = vi.spyOn(store, "updateRun");
+
+    const approved = await runtime.approveCurrent(run.id, {
+      continueAfterApprove: true,
+      allowPauseForHuman: true
+    });
+
+    expect(updateRun).not.toHaveBeenCalled();
+    expect(approved).toEqual(before);
+    expect(approved.graph.pendingTransition?.action).toBe("delegate_successor");
+    expect(approved.graph.nodeStates.review.status).toBe("needs_approval");
+  });
+
+  it("does not apply or clear a successor delegation through applyPendingTransition", async () => {
+    const { store, runtime, eventStream } = await setup(new Registry({}));
+    const run = await store.createRun({
+      title: "Successor transition boundary",
+      topic: "topic",
+      constraints: [],
+      objectiveMetric: "metric"
+    });
+    preparePendingSuccessorDelegation(run);
+    await store.updateRun(run);
+    const before = await store.getRun(run.id);
+    const updateRun = vi.spyOn(store, "updateRun");
+
+    const applied = await runtime.applyPendingTransition(run.id);
+
+    expect(updateRun).not.toHaveBeenCalled();
+    expect(applied).toEqual(before);
+    expect(applied.graph.pendingTransition?.action).toBe("delegate_successor");
+    expect(applied.graph.transitionHistory).toEqual([]);
+    expect(eventStream.history(20, run.id).map((event) => event.type)).not.toContain(
+      "TRANSITION_APPLIED"
+    );
+  });
+
+  it("keeps runs.json aligned with before/after checkpoints across a node transition", async () => {
+    const registry = new Registry({
+      collect_papers: {
+        id: "collect_papers",
+        execute: async () => ({
+          status: "success",
+          summary: "collect complete",
+          needsApproval: false,
+          toolCallsUsed: 1
+        })
+      }
+    });
+    const { paths, store, checkpointStore, runtime } = await setup(registry);
+
+    const run = await store.createRun({
+      title: "Runtime",
+      topic: "topic",
+      constraints: [],
+      objectiveMetric: "metric"
+    });
+
+    const updated = await runtime.step(run.id);
+    expect(updated.currentNode).toBe("analyze_papers");
+
+    const checkpoints = await checkpointStore.list(run.id);
+    expect(checkpoints.map((item) => item.seq)).toEqual([1, 2]);
+    expect(checkpoints.map((item) => `${item.node}:${item.phase}`)).toEqual([
+      "collect_papers:before",
+      "collect_papers:after"
+    ]);
+
+    const runsFile = await readJsonFile<{
+      runs: Array<{
+        id: string;
+        currentNode: string;
+        graph: { checkpointSeq: number; currentNode: string };
+      }>;
+    }>(paths.runsFile);
+    const persisted = runsFile.runs.find((item) => item.id === run.id);
+    expect(persisted?.currentNode).toBe("analyze_papers");
+    expect(persisted?.graph.currentNode).toBe("analyze_papers");
+    expect(persisted?.graph.checkpointSeq).toBe(2);
+  });
+
+  it("records a stage routing artifact when resume keeps newer current state over a stale checkpoint", async () => {
+    const registry = new Registry({
+      collect_papers: {
+        id: "collect_papers",
+        execute: async () => ({
+          status: "success",
+          summary: "collect complete",
+          needsApproval: false,
+          toolCallsUsed: 1
+        })
+      }
+    });
+    const { paths, store, runtime } = await setup(registry);
+
+    const run = await store.createRun({
+      title: "Stale Resume",
+      topic: "topic",
+      constraints: [],
+      objectiveMetric: "metric"
+    });
+    const advanced = await runtime.step(run.id);
+    advanced.graph.checkpointSeq = (advanced.graph.checkpointSeq ?? 0) + 1;
+    advanced.updatedAt = "2026-04-07T00:00:00.000Z";
+    await store.updateRun(advanced);
+
+    const resumed = await runtime.resume(run.id);
+
+    expect(resumed.graph.checkpointSeq).toBe(3);
+    expect(resumed.currentNode).toBe("analyze_papers");
+    await expect(
+      readJsonFile(path.join(paths.runsDir, run.id, "stage_routing", "latest.json"))
+    ).resolves.toMatchObject({
+      event: "stale_resume_state",
+      disposition: "resume_current_state",
+      retry_safe: true,
+      checkpoint_seq: 3
+    });
+  });
+
+  it("starts a new cycle and resets downstream state when explicitly rewinding to an older checkpoint", async () => {
+    const { store, checkpointStore, runtime } = await setup(new Registry({}));
+    const run = await store.createRun({
+      title: "Historical checkpoint rewind",
+      topic: "topic",
+      constraints: [],
+      objectiveMetric: "metric"
+    });
+    run.currentNode = "design_experiments";
+    run.graph.currentNode = "design_experiments";
+    run.graph.nodeStates.collect_papers.status = "completed";
+    run.graph.nodeStates.analyze_papers.status = "completed";
+    run.graph.nodeStates.generate_hypotheses.status = "completed";
+    const historical = await checkpointStore.save(run, "before", "historical design checkpoint");
+    await store.updateRun(run);
+
+    run.currentNode = "review";
+    run.graph.currentNode = "review";
+    run.graph.researchCycle = 1;
+    run.graph.checkpointSeq = historical.seq + 4;
+    for (const node of [
+      "design_experiments",
+      "implement_experiments",
+      "run_experiments",
+      "analyze_results",
+      "review"
+    ] as const) {
+      run.graph.nodeStates[node].status = "completed";
+      run.graph.nodeStates[node].lastError = "superseded downstream state";
+    }
+    await store.updateRun(run);
+
+    const restored = await runtime.resume(run.id, historical.seq);
+
+    expect(restored.currentNode).toBe("design_experiments");
+    expect(restored.status).toBe("paused");
+    expect(restored.graph.researchCycle).toBe(2);
+    expect(restored.graph.nodeStates.generate_hypotheses.status).toBe("completed");
+    for (const node of GRAPH_NODE_ORDER.slice(GRAPH_NODE_ORDER.indexOf("design_experiments"))) {
+      expect(restored.graph.nodeStates[node].status).toBe("pending");
+      expect(restored.graph.nodeStates[node].lastError).toBeUndefined();
+      expect(restored.graph.nodeStates[node].approvalSignal).toBeUndefined();
+    }
+  });
+
+  it("pauses safely and writes a routing artifact when the pre-node checkpoint cannot be saved", async () => {
+    const execute = vi.fn().mockResolvedValue({
+      status: "success",
+      summary: "should not run",
+      needsApproval: false,
+      toolCallsUsed: 1
+    });
+    const registry = new Registry({
+      collect_papers: {
+        id: "collect_papers",
+        execute
+      }
+    });
+    const { paths, store, checkpointStore, runtime } = await setup(registry);
+    vi.spyOn(checkpointStore, "save").mockRejectedValueOnce(new Error("disk full"));
+
+    const run = await store.createRun({
+      title: "Checkpoint failure",
+      topic: "topic",
+      constraints: [],
+      objectiveMetric: "metric"
+    });
+
+    const updated = await runtime.step(run.id);
+
+    expect(execute).not.toHaveBeenCalled();
+    expect(updated.status).toBe("paused");
+    expect(updated.graph.nodeStates.collect_papers.status).toBe("pending");
+    expect(updated.graph.nodeStates.collect_papers.note).toContain("Paused after checkpoint write failure");
+    await expect(
+      readJsonFile(path.join(paths.runsDir, run.id, "stage_routing", "latest.json"))
+    ).resolves.toMatchObject({
+      event: "checkpoint_write_failure",
+      disposition: "safe_pause",
+      retry_safe: true,
+      checkpoint_seq: 0
+    });
+  });
+
+  it("records the active benchmark governance condition in run artifacts and events", async () => {
+    const registry = new Registry({
+      collect_papers: {
+        id: "collect_papers",
+        execute: async (context) => {
+          expect(context.governanceCondition?.name).toBe("no_review_gate");
+          return {
+            status: "success",
+            summary: "collect complete",
+            needsApproval: false,
+            toolCallsUsed: 1
+          };
+        }
+      }
+    });
+    const eventStream = new InMemoryEventStream();
+    const cwd = mkdtempSync(path.join(os.tmpdir(), "autolabos-runtime-condition-"));
+    tempDirs.push(cwd);
+    process.chdir(cwd);
+    const paths = resolveAppPaths(cwd);
+    await ensureScaffold(paths);
+    const store = new RunStore(paths);
+    const checkpointStore = new CheckpointStore(paths);
+    const runtime = new StateGraphRuntime(store, registry, checkpointStore, eventStream, {
+      benchmarkCondition: "no_review_gate"
+    });
+    const run = await store.createRun({
+      title: "Benchmark condition",
+      topic: "topic",
+      constraints: [],
+      objectiveMetric: "metric"
+    });
+
+    await runtime.step(run.id);
+
+    const condition = await readJsonFile<{
+      name: string;
+      gates: { review_gate: boolean };
+      run_id: string;
+    }>(path.join(paths.runsDir, run.id, "governance_condition.json"));
+    expect(condition).toMatchObject({
+      name: "no_review_gate",
+      gates: { review_gate: false },
+      run_id: run.id
+    });
+    const started = eventStream.history(10, run.id).find((event) => event.type === "NODE_STARTED");
+    expect(started?.payload.governance_condition).toMatchObject({
+      name: "no_review_gate",
+      gates: { review_gate: false }
+    });
+  });
+
+  it("pauses for governance review before executing a node when policy requires it", async () => {
+    const execute = vi.fn().mockResolvedValue({
+      status: "success",
+      summary: "should not execute",
+      needsApproval: false,
+      toolCallsUsed: 1
+    });
+    const policy: GovernancePolicy = {
+      version: "1.0",
+      trustedSources: [],
+      allowedWritePaths: [".autolabos/runs/**"],
+      reviewRequiredPaths: ["src/**"],
+      forbiddenExternalActions: ["git push"],
+      claimCeilingRef: "src/core/analysis/paperMinimumGate.ts",
+      slots: [
+        {
+          id: "gate-collect",
+          description: "force review",
+          matchPattern: ".autolabos/runs/**/corpus.jsonl",
+          tier: "local_mutation_high",
+          decision: "require_review"
+        }
+      ]
+    };
+    const registry = new Registry({
+      collect_papers: {
+        id: "collect_papers",
+        execute
+      }
+    });
+    const { store, runtime } = await setupWithOptions(registry, { governancePolicy: policy });
+    const run = await store.createRun({
+      title: "Governance review",
+      topic: "topic",
+      constraints: [],
+      objectiveMetric: "metric"
+    });
+
+    const updated = await runtime.step(run.id);
+
+    expect(execute).not.toHaveBeenCalled();
+    expect(updated.status).toBe("paused");
+    expect(updated.graph.nodeStates.collect_papers.status).toBe("needs_approval");
+    expect(updated.graph.pendingTransition?.reason).toContain("governance:");
+  });
+
+  it("hard stops before node execution when governance blocks the action", async () => {
+    const execute = vi.fn().mockResolvedValue({
+      status: "success",
+      summary: "should not execute",
+      needsApproval: false,
+      toolCallsUsed: 1
+    });
+    const policy: GovernancePolicy = {
+      version: "1.0",
+      trustedSources: [],
+      allowedWritePaths: [".autolabos/runs/**"],
+      reviewRequiredPaths: ["src/**"],
+      forbiddenExternalActions: ["git push"],
+      claimCeilingRef: "src/core/analysis/paperMinimumGate.ts",
+      slots: [
+        {
+          id: "stop-collect",
+          description: "force stop",
+          matchPattern: ".autolabos/runs/**/corpus.jsonl",
+          tier: "external_side_effect",
+          decision: "hard_stop"
+        }
+      ]
+    };
+    const registry = new Registry({
+      collect_papers: {
+        id: "collect_papers",
+        execute
+      }
+    });
+    const { store, runtime } = await setupWithOptions(registry, { governancePolicy: policy });
+    const run = await store.createRun({
+      title: "Governance hard stop",
+      topic: "topic",
+      constraints: [],
+      objectiveMetric: "metric"
+    });
+
+    const updated = await runtime.step(run.id);
+
+    expect(execute).not.toHaveBeenCalled();
+    expect(updated.status).toBe("failed");
+    expect(updated.graph.nodeStates.collect_papers.status).toBe("failed");
+    expect(updated.graph.nodeStates.collect_papers.lastError).toContain("Governance hard_stop");
+  });
+
+  it("continues normally when governance allows execution and still writes checkpoints", async () => {
+    const execute = vi.fn().mockResolvedValue({
+      status: "success",
+      summary: "collect complete",
+      needsApproval: false,
+      toolCallsUsed: 1
+    });
+    const registry = new Registry({
+      collect_papers: {
+        id: "collect_papers",
+        execute
+      }
+    });
+    const { store, runtime, checkpointStore } = await setupWithOptions(registry, {
+      evaluateGovernanceAction: () => ({
+        tier: "read_only",
+        decision: "allow",
+        matchedSlotId: null,
+        detail: "Governance allow for benchmark."
+      })
+    });
+    const run = await store.createRun({
+      title: "Governance allow",
+      topic: "topic",
+      constraints: [],
+      objectiveMetric: "metric"
+    });
+
+    const updated = await runtime.step(run.id);
+
+    expect(execute).toHaveBeenCalled();
+    expect(updated.currentNode).toBe("analyze_papers");
+    const checkpoints = await checkpointStore.list(run.id);
+    expect(checkpoints.map((item) => `${item.node}:${item.phase}`)).toEqual([
+      "collect_papers:before",
+      "collect_papers:after"
+    ]);
+  });
+
+  it("accumulates successful node usage into the run record and persists it", async () => {
+    const registry = new Registry({
+      collect_papers: {
+        id: "collect_papers",
+        execute: async () => ({
+          status: "success",
+          summary: "collect complete",
+          needsApproval: false,
+          toolCallsUsed: 3,
+          costUsd: 1.25,
+          usage: {
+            inputTokens: 120,
+            outputTokens: 45
+          }
+        })
+      }
+    });
+    const { store, runtime } = await setup(registry);
+
+    const run = await store.createRun({
+      title: "Usage success",
+      topic: "topic",
+      constraints: [],
+      objectiveMetric: "metric"
+    });
+
+    const updated = await runtime.step(run.id);
+
+    expect(updated.usage?.totals.toolCalls).toBe(3);
+    expect(updated.usage?.totals.costUsd).toBe(1.25);
+    expect(updated.usage?.totals.inputTokens).toBe(120);
+    expect(updated.usage?.totals.outputTokens).toBe(45);
+    expect(updated.usage?.totals.wallTimeMs ?? -1).toBeGreaterThanOrEqual(0);
+    expect(updated.usage?.byNode.collect_papers).toMatchObject({
+      toolCalls: 3,
+      costUsd: 1.25,
+      inputTokens: 120,
+      outputTokens: 45,
+      executions: 1
+    });
+
+    const persisted = await store.getRun(run.id);
+    expect(persisted?.usage?.totals.toolCalls).toBe(3);
+    expect(persisted?.usage?.byNode.collect_papers?.executions).toBe(1);
+  });
+
+  it("persists a clean running node before execution so fresh reloads cannot retain stale failure text", async () => {
+    let signalStarted!: () => void;
+    let releaseExecution!: () => void;
+    const started = new Promise<void>((resolve) => {
+      signalStarted = resolve;
+    });
+    const executionGate = new Promise<void>((resolve) => {
+      releaseExecution = resolve;
+    });
+    const registry = new Registry({
+      collect_papers: {
+        id: "collect_papers",
+        execute: async () => {
+          signalStarted();
+          await executionGate;
+          return {
+            status: "success",
+            summary: "fresh collection completed",
+            needsApproval: true,
+            toolCallsUsed: 1
+          };
+        }
+      }
+    });
+    const { store, runtime } = await setup(registry);
+    const run = await store.createRun({
+      title: "Fresh running projection",
+      topic: "topic",
+      constraints: [],
+      objectiveMetric: "metric"
+    });
+    run.status = "failed";
+    run.graph.nodeStates.collect_papers.status = "failed";
+    run.graph.nodeStates.collect_papers.note = "stale collection note";
+    run.graph.nodeStates.collect_papers.lastError = "stale collection error";
+    await store.updateRun(run);
+
+    const stepPromise = runtime.step(run.id);
+    await started;
+    const persistedWhileRunning = await store.getRun(run.id);
+    releaseExecution();
+    await stepPromise;
+
+    expect(persistedWhileRunning).toMatchObject({
+      status: "running",
+      graph: {
+        nodeStates: {
+          collect_papers: { status: "running" }
+        }
+      }
+    });
+    expect(persistedWhileRunning?.graph.nodeStates.collect_papers.note).toBeUndefined();
+    expect(persistedWhileRunning?.graph.nodeStates.collect_papers.lastError).toBeUndefined();
+  });
+
+
+  it("keeps the completed node summary when advancing into a pending next node with a stale reset note", async () => {
+    const registry = new Registry({
+      run_experiments: {
+        id: "run_experiments",
+        execute: async () => ({
+          status: "success",
+          summary: "run_experiments completed with pilot_size=10 and objective not met",
+          needsApproval: false,
+          toolCallsUsed: 1
+        })
+      }
+    });
+    const { store, runtime, checkpointStore } = await setup(registry);
+
+    const run = await store.createRun({
+      title: "Latest summary alignment",
+      topic: "topic",
+      constraints: [],
+      objectiveMetric: "metric"
+    });
+
+    run.currentNode = "run_experiments";
+    run.graph.currentNode = "run_experiments";
+    run.status = "running";
+    run.graph.nodeStates.collect_papers.status = "completed";
+    run.graph.nodeStates.analyze_papers.status = "completed";
+    run.graph.nodeStates.generate_hypotheses.status = "completed";
+    run.graph.nodeStates.design_experiments.status = "completed";
+    run.graph.nodeStates.implement_experiments.status = "completed";
+    run.graph.nodeStates.analyze_results.status = "pending";
+    run.graph.nodeStates.analyze_results.note = "Reset by backward jump (cycle 4)";
+    run.graph.nodeStates.analyze_results.updatedAt = "2026-03-20T00:33:33.470Z";
+    await store.updateRun(run);
+
+    const updated = await runtime.step(run.id);
+    expect(updated.currentNode).toBe("analyze_results");
+    expect(updated.graph.nodeStates.run_experiments.status).toBe("completed");
+    expect(updated.latestSummary).toBe("run_experiments completed with pilot_size=10 and objective not met");
+
+    const persisted = await store.getRun(run.id);
+    expect(persisted?.currentNode).toBe("analyze_results");
+    expect(persisted?.latestSummary).toBe("run_experiments completed with pilot_size=10 and objective not met");
+
+    const latestCheckpoint = await checkpointStore.latest(run.id);
+    expect(latestCheckpoint?.node).toBe("run_experiments");
+    expect(latestCheckpoint?.phase).toBe("after");
+  });
+
+  it("keeps rollback note, latestSummary, currentNode, and counters aligned on implement_experiments rollback", async () => {
+    const registry = new Registry({
+      implement_experiments: {
+        id: "implement_experiments",
+        execute: async () => ({
+          status: "failure",
+          error: "verification failed",
+          toolCallsUsed: 1
+        })
+      }
+    });
+    const { store, checkpointStore, runtime } = await setup(registry);
+
+    const run = await store.createRun({
+      title: "Rollback Alignment",
+      topic: "topic",
+      constraints: [],
+      objectiveMetric: "metric"
+    });
+
+    run.currentNode = "implement_experiments";
+    run.graph.currentNode = "implement_experiments";
+    run.status = "running";
+    run.graph.retryPolicy.maxAttemptsPerNode = 1;
+    run.graph.retryPolicy.maxAutoRollbacksPerNode = 2;
+    run.graph.nodeStates.collect_papers.status = "completed";
+    run.graph.nodeStates.analyze_papers.status = "completed";
+    run.graph.nodeStates.generate_hypotheses.status = "completed";
+    run.graph.nodeStates.design_experiments.status = "completed";
+    run.graph.nodeStates.implement_experiments.status = "pending";
+    await store.updateRun(run);
+
+    const updated = await runtime.step(run.id);
+    const rollbackNote = updated.graph.nodeStates.design_experiments.note;
+
+    expect(updated.currentNode).toBe("design_experiments");
+    expect(updated.graph.currentNode).toBe("design_experiments");
+    expect(updated.latestSummary).toBe(rollbackNote);
+    expect(rollbackNote).toContain("Auto rollback from implement_experiments after 1/1 failed attempts");
+    expect(updated.graph.retryCounters.implement_experiments).toBe(0);
+    expect(updated.graph.rollbackCounters.implement_experiments).toBe(1);
+
+    const latestCheckpoint = await checkpointStore.latest(run.id);
+    expect(latestCheckpoint?.phase).toBe("jump");
+    expect(latestCheckpoint?.runSnapshot.currentNode).toBe("design_experiments");
+    expect(latestCheckpoint?.runSnapshot.latestSummary).toBe(rollbackNote);
+  });
+
+  it("records usage for failed nodes before rolling back", async () => {
+    const registry = new Registry({
+      implement_experiments: {
+        id: "implement_experiments",
+        execute: async () => ({
+          status: "failure",
+          error: "verification failed",
+          toolCallsUsed: 2,
+          costUsd: 0.4,
+          usage: {
+            inputTokens: 18,
+            outputTokens: 9
+          }
+        })
+      }
+    });
+    const { store, runtime } = await setup(registry);
+
+    const run = await store.createRun({
+      title: "Usage failure",
+      topic: "topic",
+      constraints: [],
+      objectiveMetric: "metric"
+    });
+
+    run.currentNode = "implement_experiments";
+    run.graph.currentNode = "implement_experiments";
+    run.status = "running";
+    run.graph.retryPolicy.maxAttemptsPerNode = 1;
+    run.graph.retryPolicy.maxAutoRollbacksPerNode = 1;
+    run.graph.nodeStates.collect_papers.status = "completed";
+    run.graph.nodeStates.analyze_papers.status = "completed";
+    run.graph.nodeStates.generate_hypotheses.status = "completed";
+    run.graph.nodeStates.design_experiments.status = "completed";
+    await store.updateRun(run);
+
+    const updated = await runtime.step(run.id);
+
+    expect(updated.currentNode).toBe("design_experiments");
+    expect(updated.usage?.totals.toolCalls).toBe(2);
+    expect(updated.usage?.totals.costUsd).toBe(0.4);
+    expect(updated.usage?.byNode.implement_experiments).toMatchObject({
+      toolCalls: 2,
+      costUsd: 0.4,
+      inputTokens: 18,
+      outputTokens: 9,
+      executions: 1
+    });
+  });
+
+  it("fails analyze_papers in place for Responses API PDF config errors instead of rerunning collect_papers", async () => {
+    let collectExecutions = 0;
+    let analyzeExecutions = 0;
+    const registry = new Registry({
+      collect_papers: {
+        id: "collect_papers",
+        execute: async () => {
+          collectExecutions += 1;
+          return {
+            status: "success",
+            summary: "collect complete",
+            needsApproval: false,
+            toolCallsUsed: 1
+          };
+        }
+      },
+      analyze_papers: {
+        id: "analyze_papers",
+        execute: async () => {
+          analyzeExecutions += 1;
+          return {
+            status: "failure",
+            summary: "Responses API PDF analysis is selected, but OPENAI_API_KEY is not configured.",
+            error: "OPENAI_API_KEY is required when PDF analysis mode is set to Responses API.",
+            toolCallsUsed: 0
+          };
+        }
+      }
+    });
+    const { store, runtime } = await setup(registry);
+
+    const run = await store.createRun({
+      title: "Collect rollback guard",
+      topic: "topic",
+      constraints: [],
+      objectiveMetric: "metric"
+    });
+    run.graph.retryPolicy.maxAttemptsPerNode = 3;
+    run.graph.retryPolicy.maxAutoRollbacksPerNode = 2;
+    await store.updateRun(run);
+
+    const updated = await runtime.runUntilPause(run.id);
+
+    expect(collectExecutions).toBe(1);
+    expect(analyzeExecutions).toBe(1);
+    expect(updated.status).toBe("failed");
+    expect(updated.currentNode).toBe("analyze_papers");
+    expect(updated.graph.nodeStates.collect_papers.status).toBe("completed");
+    expect(updated.graph.nodeStates.analyze_papers.status).toBe("failed");
+    expect(updated.graph.nodeStates.analyze_papers.lastError).toBe(
+      "OPENAI_API_KEY is required when PDF analysis mode is set to Responses API."
+    );
+    expect(updated.graph.retryCounters.analyze_papers).toBe(3);
+    expect(updated.graph.rollbackCounters.analyze_papers ?? 0).toBe(0);
+    expect(updated.usage?.byNode.collect_papers?.executions).toBe(1);
+    expect(updated.usage?.byNode.analyze_papers?.executions).toBe(1);
+
+    const persisted = await store.getRun(run.id);
+    expect(persisted?.status).toBe("failed");
+    expect(persisted?.currentNode).toBe("analyze_papers");
+    expect(persisted?.usage?.byNode.collect_papers?.executions).toBe(1);
+    expect(persisted?.usage?.byNode.analyze_papers?.executions).toBe(1);
+  });
+
+  it("pauses before starting another node when cumulative spend already exceeds the configured budget", async () => {
+    let executions = 0;
+    const registry = new Registry({
+      collect_papers: {
+        id: "collect_papers",
+        execute: async () => {
+          executions += 1;
+          return {
+            status: "success",
+            summary: "collect complete",
+            needsApproval: false,
+            toolCallsUsed: 1
+          };
+        }
+      }
+    });
+    const { store, runtime } = await setupWithOptions(registry, {
+      budgetGuardUsd: 1
+    });
+
+    const run = await store.createRun({
+      title: "Budget pause before step",
+      topic: "topic",
+      constraints: [],
+      objectiveMetric: "metric"
+    });
+    run.usage = {
+      totals: {
+        costUsd: 1.25,
+        toolCalls: 1,
+        inputTokens: 10,
+        outputTokens: 5,
+        wallTimeMs: 100
+      },
+      byNode: {}
+    };
+    await store.updateRun(run);
+
+    const updated = await runtime.step(run.id);
+
+    expect(executions).toBe(0);
+    expect(updated.status).toBe("paused");
+    expect(updated.currentNode).toBe("collect_papers");
+    expect(updated.graph.nodeStates.collect_papers.note).toContain("Budget guard paused further execution");
+  });
+
+  it("pauses after a successful node when the node pushes cumulative spend above the budget", async () => {
+    const registry = new Registry({
+      collect_papers: {
+        id: "collect_papers",
+        execute: async () => ({
+          status: "success",
+          summary: "collect complete",
+          needsApproval: false,
+          toolCallsUsed: 2,
+          costUsd: 1.25
+        })
+      }
+    });
+    const { store, runtime } = await setupWithOptions(registry, {
+      budgetGuardUsd: 1
+    });
+
+    const run = await store.createRun({
+      title: "Budget pause after success",
+      topic: "topic",
+      constraints: [],
+      objectiveMetric: "metric"
+    });
+
+    const updated = await runtime.step(run.id);
+
+    expect(updated.status).toBe("paused");
+    expect(updated.currentNode).toBe("analyze_papers");
+    expect(updated.graph.nodeStates.collect_papers.status).toBe("completed");
+    expect(updated.graph.nodeStates.analyze_papers.status).toBe("pending");
+    expect(updated.graph.nodeStates.analyze_papers.note).toContain("Budget guard paused further execution at analyze_papers");
+    expect(updated.usage?.totals.costUsd).toBe(1.25);
+  });
+
+  it("blocks minimal approval auto-advance when cumulative spend exceeds the budget", async () => {
+    const registry = new Registry({
+      generate_hypotheses: {
+        id: "generate_hypotheses",
+        execute: async () => ({
+          status: "success",
+          summary: "hypotheses ready",
+          needsApproval: true,
+          toolCallsUsed: 1,
+          costUsd: 0.6
+        })
+      }
+    });
+    const { store, runtime } = await setupWithOptions(registry, {
+      approvalMode: "minimal",
+      budgetGuardUsd: 0.5
+    });
+
+    const run = await store.createRun({
+      title: "Budget blocks auto approval",
+      topic: "topic",
+      constraints: [],
+      objectiveMetric: "metric"
+    });
+    run.currentNode = "generate_hypotheses";
+    run.graph.currentNode = "generate_hypotheses";
+    run.status = "running";
+    run.graph.nodeStates.collect_papers.status = "completed";
+    run.graph.nodeStates.analyze_papers.status = "completed";
+    await store.updateRun(run);
+
+    const updated = await runtime.runUntilPause(run.id);
+
+    expect(updated.status).toBe("paused");
+    expect(updated.currentNode).toBe("generate_hypotheses");
+    expect(updated.graph.nodeStates.generate_hypotheses.status).toBe("needs_approval");
+    expect(updated.graph.nodeStates.generate_hypotheses.note).toContain("Budget guard paused further execution");
+  });
+
+  it("pauses instead of auto-retrying when a failed node pushes cumulative spend above the budget", async () => {
+    const registry = new Registry({
+      implement_experiments: {
+        id: "implement_experiments",
+        execute: async () => ({
+          status: "failure",
+          error: "verification failed",
+          toolCallsUsed: 2,
+          costUsd: 0.4
+        })
+      }
+    });
+    const { store, runtime } = await setupWithOptions(registry, {
+      budgetGuardUsd: 0.2
+    });
+
+    const run = await store.createRun({
+      title: "Budget blocks auto retry",
+      topic: "topic",
+      constraints: [],
+      objectiveMetric: "metric"
+    });
+    run.currentNode = "implement_experiments";
+    run.graph.currentNode = "implement_experiments";
+    run.status = "running";
+    run.graph.retryPolicy.maxAttemptsPerNode = 2;
+    run.graph.retryPolicy.maxAutoRollbacksPerNode = 1;
+    run.graph.nodeStates.collect_papers.status = "completed";
+    run.graph.nodeStates.analyze_papers.status = "completed";
+    run.graph.nodeStates.generate_hypotheses.status = "completed";
+    run.graph.nodeStates.design_experiments.status = "completed";
+    await store.updateRun(run);
+
+    const updated = await runtime.step(run.id);
+
+    expect(updated.status).toBe("paused");
+    expect(updated.currentNode).toBe("implement_experiments");
+    expect(updated.graph.nodeStates.implement_experiments.status).toBe("pending");
+    expect(updated.graph.nodeStates.implement_experiments.note).toContain("Budget guard paused further execution");
+    expect(updated.usage?.totals.costUsd).toBe(0.4);
+  });
+
+  it("uses the highest on-disk checkpoint seq before saving implement_experiments failure checkpoints", async () => {
+    const { store, checkpointStore, runtime } = await setup(new Registry({}));
+
+    const run = await store.createRun({
+      title: "Stale Failure",
+      topic: "topic",
+      constraints: [],
+      objectiveMetric: "metric"
+    });
+
+    run.currentNode = "implement_experiments";
+    run.graph.currentNode = "implement_experiments";
+    run.status = "running";
+    run.graph.retryPolicy.maxAttemptsPerNode = 1;
+    run.graph.retryPolicy.maxAutoRollbacksPerNode = 1;
+    run.graph.nodeStates.collect_papers.status = "completed";
+    run.graph.nodeStates.analyze_papers.status = "completed";
+    run.graph.nodeStates.generate_hypotheses.status = "completed";
+    run.graph.nodeStates.design_experiments.status = "completed";
+
+    const stale = structuredClone(run);
+
+    await checkpointStore.save(run, "before");
+    await store.updateRun(run);
+    await checkpointStore.save(run, "retry", "auto retry");
+    await store.updateRun(run);
+
+    const failureRuntime = runtime as unknown as {
+      handleFailure(runRecord: RunRecord, node: GraphNodeId, message: string): Promise<RunRecord>;
+    };
+    const updated = await failureRuntime.handleFailure(stale, "implement_experiments", "verification failed");
+
+    expect(updated.currentNode).toBe("design_experiments");
+    expect(updated.graph.checkpointSeq).toBe(4);
+    expect(updated.latestSummary).toContain("Auto rollback from implement_experiments after 1/1 failed attempts");
+
+    const checkpoints = await checkpointStore.list(run.id);
+    expect(checkpoints.map((item) => item.seq)).toEqual([1, 2, 3, 4]);
+
+    const latestCheckpoint = await checkpointStore.latest(run.id);
+    expect(latestCheckpoint?.seq).toBe(4);
+    expect(latestCheckpoint?.runSnapshot.currentNode).toBe("design_experiments");
+  });
+
+  it("rolls back generate_hypotheses immediately when low-quality fallback evidence cannot support another identical retry", async () => {
+    const registry = new Registry({
+      generate_hypotheses: {
+        id: "generate_hypotheses",
+        execute: async () => ({
+          status: "failure",
+          error:
+            "Hypothesis generation blocked: the selected fallback hypotheses are supported by a single low-confidence, caveated paper. Strengthen analyze_papers before designing experiments.",
+          toolCallsUsed: 1
+        })
+      }
+    });
+    const { store, runtime } = await setup(registry);
+
+    const run = await store.createRun({
+      title: "Hypothesis rollback",
+      topic: "topic",
+      constraints: [],
+      objectiveMetric: "metric"
+    });
+
+    run.currentNode = "generate_hypotheses";
+    run.graph.currentNode = "generate_hypotheses";
+    run.status = "running";
+    run.graph.retryPolicy.maxAttemptsPerNode = 3;
+    run.graph.retryPolicy.maxAutoRollbacksPerNode = 2;
+    run.graph.nodeStates.collect_papers.status = "completed";
+    run.graph.nodeStates.analyze_papers.status = "completed";
+    await store.updateRun(run);
+
+    const updated = await runtime.step(run.id);
+
+    expect(updated.currentNode).toBe("analyze_papers");
+    expect(updated.status).toBe("running");
+    expect(updated.graph.retryCounters.generate_hypotheses).toBe(0);
+    expect(updated.graph.rollbackCounters.generate_hypotheses).toBe(1);
+    expect(updated.graph.nodeStates.analyze_papers.status).toBe("running");
+    expect(updated.graph.nodeStates.analyze_papers.note).toContain(
+      "Auto rollback from generate_hypotheses after 3/3 failed attempts"
+    );
+    expect(updated.latestSummary).toContain(
+      "Auto rollback from generate_hypotheses after 3/3 failed attempts"
+    );
+  });
+
+  it("rolls back generate_hypotheses immediately when deterministic fallback lacks an operational contract", async () => {
+    const registry = new Registry({
+      generate_hypotheses: {
+        id: "generate_hypotheses",
+        execute: async () => ({
+          status: "failure",
+          error:
+            "Hypothesis generation blocked: selected deterministic fallback hypotheses lack an operational dataset/metric/testability contract. Strengthen analyze_papers or rerun hypothesis generation before designing experiments.",
+          toolCallsUsed: 1
+        })
+      }
+    });
+    const { store, runtime } = await setup(registry);
+
+    const run = await store.createRun({
+      title: "Hypothesis rollback",
+      topic: "topic",
+      constraints: [],
+      objectiveMetric: "metric"
+    });
+
+    run.currentNode = "generate_hypotheses";
+    run.graph.currentNode = "generate_hypotheses";
+    run.status = "running";
+    run.graph.retryPolicy.maxAttemptsPerNode = 3;
+    run.graph.retryPolicy.maxAutoRollbacksPerNode = 2;
+    run.graph.nodeStates.collect_papers.status = "completed";
+    run.graph.nodeStates.analyze_papers.status = "completed";
+    await store.updateRun(run);
+
+    const updated = await runtime.step(run.id);
+
+    expect(updated.currentNode).toBe("analyze_papers");
+    expect(updated.status).toBe("running");
+    expect(updated.graph.retryCounters.generate_hypotheses).toBe(0);
+    expect(updated.graph.rollbackCounters.generate_hypotheses).toBe(1);
+    expect(updated.graph.nodeStates.analyze_papers.status).toBe("running");
+    expect(updated.graph.nodeStates.analyze_papers.note).toContain(
+      "Auto rollback from generate_hypotheses after 3/3 failed attempts"
+    );
+    expect(updated.latestSummary).toContain(
+      "Auto rollback from generate_hypotheses after 3/3 failed attempts"
+    );
+  });
+
+  it("uses a typed topic gate block to skip retries and preserve upstream rollback semantics", async () => {
+    let executions = 0;
+    const registry = new Registry({
+      generate_hypotheses: {
+        id: "generate_hypotheses",
+        execute: async () => {
+          executions += 1;
+          return {
+            status: "failure",
+            failureKind: "gate_blocked",
+            error: "No executable topic candidate survived the independently reviewed portfolio.",
+            toolCallsUsed: 4
+          };
+        }
+      }
+    });
+    const { store, runtime, eventStream } = await setup(registry);
+
+    const run = await store.createRun({
+      title: "Typed topic gate block",
+      topic: "topic",
+      constraints: [],
+      objectiveMetric: "metric"
+    });
+    run.currentNode = "generate_hypotheses";
+    run.graph.currentNode = "generate_hypotheses";
+    run.status = "running";
+    run.graph.retryPolicy.maxAttemptsPerNode = 3;
+    run.graph.retryPolicy.maxAutoRollbacksPerNode = 2;
+    run.graph.nodeStates.collect_papers.status = "completed";
+    run.graph.nodeStates.analyze_papers.status = "completed";
+    await store.updateRun(run);
+
+    const updated = await runtime.step(run.id);
+    const events = eventStream.history(50, run.id);
+
+    expect(executions).toBe(1);
+    expect(updated.currentNode).toBe("analyze_papers");
+    expect(updated.status).toBe("running");
+    expect(updated.graph.retryCounters.generate_hypotheses).toBe(0);
+    expect(updated.graph.rollbackCounters.generate_hypotheses).toBe(1);
+    expect(updated.graph.pendingTransition).toBeUndefined();
+    expect(events.map((event) => event.type)).not.toContain("NODE_RETRY");
+    expect(
+      events.some(
+        (event) =>
+          event.type === "OBS_RECEIVED" &&
+          String(event.payload?.text || "").includes("typed gate block")
+      )
+    ).toBe(true);
+  });
+
+  it("does not retry or roll back a typed collection environment block", async () => {
+    let executions = 0;
+    const registry = new Registry({
+      collect_papers: {
+        id: "collect_papers",
+        execute: async () => {
+          executions += 1;
+          return {
+            status: "failure",
+            failureKind: "environment",
+            error:
+              "topic_discovery_retrieval_provider_coverage_degraded: configured providers unavailable",
+            toolCallsUsed: 4
+          };
+        }
+      }
+    });
+    const { store, runtime, eventStream } = await setup(registry);
+
+    const run = await store.createRun({
+      title: "Typed collection environment block",
+      topic: "topic",
+      constraints: [],
+      objectiveMetric: "metric"
+    });
+    run.currentNode = "collect_papers";
+    run.graph.currentNode = "collect_papers";
+    run.status = "running";
+    run.graph.retryPolicy.maxAttemptsPerNode = 3;
+    run.graph.retryPolicy.maxAutoRollbacksPerNode = 2;
+    await store.updateRun(run);
+
+    const updated = await runtime.step(run.id);
+    const events = eventStream.history(50, run.id);
+
+    expect(executions).toBe(1);
+    expect(updated.status).toBe("failed");
+    expect(updated.currentNode).toBe("collect_papers");
+    expect(updated.graph.currentNode).toBe("collect_papers");
+    expect(updated.graph.retryCounters.collect_papers).toBe(3);
+    expect(updated.graph.rollbackCounters.collect_papers).toBeUndefined();
+    expect(events.map((event) => event.type)).not.toContain("NODE_RETRY");
+    expect(
+      events.some(
+        (event) =>
+          event.type === "OBS_RECEIVED" &&
+          String(event.payload?.text || "").includes("typed environment block")
+      )
+    ).toBe(true);
+  });
+
+  it("fails design_experiments without retry or rollback when the brief contract blocks progression", async () => {
+    const registry = new Registry({
+      design_experiments: {
+        id: "design_experiments",
+        execute: async () => ({
+          status: "failure",
+          error:
+            "Brief contract blocked design progression: MISSING_BASELINE_CONTRACT_VIOLATED, MISSING_BASELINE_CLAIM_CEILING_VIOLATED.",
+          toolCallsUsed: 1
+        })
+      }
+    });
+    const { store, runtime } = await setup(registry);
+
+    const run = await store.createRun({
+      title: "Brief contract blocked",
+      topic: "topic",
+      constraints: [],
+      objectiveMetric: "metric"
+    });
+
+    run.currentNode = "design_experiments";
+    run.graph.currentNode = "design_experiments";
+    run.status = "running";
+    run.graph.retryPolicy.maxAttemptsPerNode = 3;
+    run.graph.retryPolicy.maxAutoRollbacksPerNode = 2;
+    run.graph.nodeStates.collect_papers.status = "completed";
+    run.graph.nodeStates.analyze_papers.status = "completed";
+    run.graph.nodeStates.generate_hypotheses.status = "completed";
+    await store.updateRun(run);
+
+    const updated = await runtime.step(run.id);
+
+    expect(updated.status).toBe("failed");
+    expect(updated.currentNode).toBe("design_experiments");
+    expect(updated.graph.currentNode).toBe("design_experiments");
+    expect(updated.graph.retryCounters.design_experiments).toBe(3);
+    expect(updated.graph.rollbackCounters.design_experiments).toBeUndefined();
+    expect(updated.graph.nodeStates.generate_hypotheses.status).toBe("completed");
+    expect(updated.graph.nodeStates.design_experiments.status).toBe("failed");
+    expect(updated.graph.nodeStates.design_experiments.lastError).toContain(
+      "MISSING_BASELINE_CONTRACT_VIOLATED"
+    );
+    expect(updated.latestSummary).toContain("Brief contract blocked design progression");
+  });
+
+  it("does not rerun or roll back collect_papers after frozen semantic-review recovery is exhausted", async () => {
+    let executions = 0;
+    const registry = new Registry({
+      collect_papers: {
+        id: "collect_papers",
+        execute: async () => {
+          executions += 1;
+          return {
+            status: "failure",
+            error:
+              "topic_discovery_semantic_review_recovery_exhausted: semantic_audit_timeout_partitions_exhausted",
+            toolCallsUsed: 4
+          };
+        }
+      }
+    });
+    const { store, runtime, eventStream } = await setup(registry);
+
+    const run = await store.createRun({
+      title: "Semantic review recovery exhausted",
+      topic: "topic",
+      constraints: [],
+      objectiveMetric: "metric"
+    });
+    run.currentNode = "collect_papers";
+    run.graph.currentNode = "collect_papers";
+    run.status = "running";
+    run.graph.retryPolicy.maxAttemptsPerNode = 3;
+    run.graph.retryPolicy.maxAutoRollbacksPerNode = 2;
+    await store.updateRun(run);
+
+    const updated = await runtime.step(run.id);
+    const events = eventStream.history(50, run.id);
+
+    expect(executions).toBe(1);
+    expect(updated.status).toBe("failed");
+    expect(updated.currentNode).toBe("collect_papers");
+    expect(updated.graph.currentNode).toBe("collect_papers");
+    expect(updated.graph.retryCounters.collect_papers).toBe(3);
+    expect(updated.graph.rollbackCounters.collect_papers).toBeUndefined();
+    expect(updated.graph.nodeStates.collect_papers.status).toBe("failed");
+    expect(updated.graph.nodeStates.collect_papers.lastError).toContain(
+      "semantic_audit_timeout_partitions_exhausted"
+    );
+    expect(events.map((event) => event.type)).not.toContain("NODE_RETRY");
+    expect(
+      events.some(
+        (event) =>
+          event.type === "OBS_RECEIVED" &&
+          String(event.payload?.text || "").includes(
+            "frozen semantic-review recovery budget is exhausted"
+          )
+      )
+    ).toBe(true);
+  });
+
+  it("rolls back implement_experiments immediately when staged LLM execution never produces a runnable artifact", async () => {
+    const registry = new Registry({
+      implement_experiments: {
+        id: "implement_experiments",
+        execute: async () => ({
+          status: "failure",
+          error:
+            "Implementation execution failed before any runnable implementation was produced: implement_experiments staged_llm request timed out after 600000ms",
+          toolCallsUsed: 1
+        })
+      }
+    });
+    const { paths, store, runtime } = await setup(registry);
+
+    const run = await store.createRun({
+      title: "Implement timeout rollback",
+      topic: "topic",
+      constraints: [],
+      objectiveMetric: "metric"
+    });
+
+    run.currentNode = "implement_experiments";
+    run.graph.currentNode = "implement_experiments";
+    run.status = "running";
+    run.graph.retryPolicy.maxAttemptsPerNode = 3;
+    run.graph.retryPolicy.maxAutoRollbacksPerNode = 2;
+    run.graph.nodeStates.collect_papers.status = "completed";
+    run.graph.nodeStates.analyze_papers.status = "completed";
+    run.graph.nodeStates.generate_hypotheses.status = "completed";
+    run.graph.nodeStates.design_experiments.status = "completed";
+    await store.updateRun(run);
+
+    const updated = await runtime.step(run.id);
+
+    expect(updated.currentNode).toBe("design_experiments");
+    expect(updated.status).toBe("running");
+    expect(updated.graph.retryCounters.implement_experiments).toBe(0);
+    expect(updated.graph.rollbackCounters.implement_experiments).toBe(1);
+    expect(updated.graph.nodeStates.design_experiments.status).toBe("running");
+    expect(updated.graph.nodeStates.design_experiments.note).toContain(
+      "Auto rollback from implement_experiments after 3/3 failed attempts"
+    );
+    await expect(
+      readJsonFile(path.join(paths.runsDir, run.id, "stage_routing", "latest.json"))
+    ).resolves.toMatchObject({
+      event: "timeout_partial",
+      disposition: "safe_pause",
+      retry_safe: false,
+      node_id: "implement_experiments"
+    });
+  });
+
+  it.each(["quota_exhausted", "provider_unavailable", "stream_terminated"] as const)(
+    "fails implement_experiments without upstream rollback for typed provider failure %s",
+    async (code) => {
+      const safeProviderError = new CodexOAuthCompletionError(code).message;
+      const registry = new Registry({
+        implement_experiments: {
+          id: "implement_experiments",
+          execute: async () => ({
+            status: "failure",
+            error: `Implementation execution failed before any runnable implementation was produced: ${safeProviderError}`,
+            toolCallsUsed: 1
+          })
+        }
+      });
+      const { paths, store, runtime, eventStream } = await setup(registry, { persistEvents: true });
+
+      const run = await store.createRun({
+        title: "Implement provider failure",
+        topic: "topic",
+        constraints: [],
+        objectiveMetric: "metric"
+      });
+
+      run.currentNode = "implement_experiments";
+      run.graph.currentNode = "implement_experiments";
+      run.status = "running";
+      run.graph.retryPolicy.maxAttemptsPerNode = 3;
+      run.graph.retryPolicy.maxAutoRollbacksPerNode = 2;
+      run.graph.nodeStates.collect_papers.status = "completed";
+      run.graph.nodeStates.analyze_papers.status = "completed";
+      run.graph.nodeStates.generate_hypotheses.status = "completed";
+      run.graph.nodeStates.design_experiments.status = "completed";
+      await store.updateRun(run);
+
+      const updated = await runtime.step(run.id);
+
+      expect(updated.status).toBe("failed");
+      expect(updated.currentNode).toBe("implement_experiments");
+      expect(updated.graph.currentNode).toBe("implement_experiments");
+      expect(updated.graph.retryCounters.implement_experiments).toBe(3);
+      expect(updated.graph.rollbackCounters.implement_experiments).toBeUndefined();
+      expect(updated.graph.nodeStates.design_experiments.status).toBe("completed");
+      expect(updated.graph.nodeStates.implement_experiments.status).toBe("failed");
+      expect(updated.graph.nodeStates.implement_experiments.lastError).toContain(
+        `codex_oauth:${code}`
+      );
+      expect(updated.latestSummary).toContain(`codex_oauth:${code}`);
+      const persistedProjection = JSON.stringify({
+        updated,
+        events: eventStream.history(200, run.id),
+        persistedEvents: await fs.readFile(path.join(paths.runsDir, run.id, "events.jsonl"), "utf8")
+      });
+      expect(persistedProjection).not.toContain("usage_limit_reached");
+      expect(persistedProjection).not.toContain("Codex OAuth backend request failed: 429");
+    }
+  );
+
+  it.each([
+    ["quota_exhausted", "usage quota is exhausted"],
+    ["rate_limited", "requires backoff"],
+    ["stream_terminated", "requires caller-level recovery"],
+    ["observer_error", "local completion progress observer failed"]
+  ] as const)(
+    "skips unsafe cross-node retry and rollback for Codex OAuth %s with accurate guidance",
+    async (code, expectedGuidance) => {
+      let executions = 0;
+      const registry = new Registry({
+        generate_hypotheses: {
+          id: "generate_hypotheses",
+          execute: async () => {
+            executions += 1;
+            return {
+              status: "failure",
+              error: new CodexOAuthCompletionError(code).message,
+              toolCallsUsed: 1
+            };
+          }
+        }
+      });
+      const { store, runtime, eventStream } = await setup(registry);
+      const run = await store.createRun({
+        title: "Cross-node provider failure",
+        topic: "topic",
+        constraints: [],
+        objectiveMetric: "metric"
+      });
+      run.currentNode = "generate_hypotheses";
+      run.graph.currentNode = "generate_hypotheses";
+      run.status = "running";
+      run.graph.retryPolicy.maxAttemptsPerNode = 3;
+      run.graph.retryPolicy.maxAutoRollbacksPerNode = 2;
+      run.graph.nodeStates.collect_papers.status = "completed";
+      run.graph.nodeStates.analyze_papers.status = "completed";
+      await store.updateRun(run);
+
+      const updated = await runtime.step(run.id);
+      const events = eventStream.history(100, run.id);
+      const eventTypes = events.map((event) => event.type);
+
+      expect(executions).toBe(1);
+      expect(updated.status).toBe("failed");
+      expect(updated.currentNode).toBe("generate_hypotheses");
+      expect(updated.graph.currentNode).toBe("generate_hypotheses");
+      expect(updated.graph.retryCounters.generate_hypotheses).toBe(3);
+      expect(updated.graph.rollbackCounters.generate_hypotheses).toBeUndefined();
+      expect(updated.graph.nodeStates.analyze_papers.status).toBe("completed");
+      expect(eventTypes).not.toContain("NODE_RETRY");
+      expect(eventTypes).not.toContain("NODE_ROLLBACK");
+      expect(
+        events.some(
+          (event) => event.type === "OBS_RECEIVED"
+            && String(event.payload?.text || "").includes(expectedGuidance)
+        )
+      ).toBe(true);
+    }
+  );
+
+  it("keeps a raw provider canary out of every persisted state-graph failure projection", async () => {
+    const fetchMock = vi.fn(async () => new Response("sensitive-provider-canary", { status: 503 }));
+    vi.stubGlobal("fetch", fetchMock);
+    const client = new CodexOAuthResponsesTextClient(async () => ({
+      accessToken: "test-access-token",
+      accountId: "fixture-account"
+    }));
+    const registry = new Registry({
+      generate_hypotheses: {
+        id: "generate_hypotheses",
+        execute: async () => {
+          try {
+            await client.complete({ prompt: "bounded fixture prompt" });
+          } catch (error) {
+            return {
+              status: "failure",
+              error: error instanceof Error ? error.message : "Codex OAuth completion failed.",
+              toolCallsUsed: 1
+            };
+          }
+          throw new Error("Expected the provider fixture to fail.");
+        }
+      }
+    });
+    const { paths, store, runtime } = await setup(registry, { persistEvents: true });
+    const run = await store.createRun({
+      title: "Provider projection boundary",
+      topic: "topic",
+      constraints: [],
+      objectiveMetric: "metric"
+    });
+    run.currentNode = "generate_hypotheses";
+    run.graph.currentNode = "generate_hypotheses";
+    run.status = "running";
+    run.graph.retryPolicy.maxAttemptsPerNode = 3;
+    run.graph.retryPolicy.maxAutoRollbacksPerNode = 2;
+    run.graph.nodeStates.collect_papers.status = "completed";
+    run.graph.nodeStates.analyze_papers.status = "completed";
+    await store.updateRun(run);
+
+    try {
+      const updated = await runtime.step(run.id);
+      const persistedProjection = await readAllWorkspaceFiles(paths.cwd);
+
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+      expect(updated.status).toBe("failed");
+      expect(persistedProjection).toContain("codex_oauth:provider_unavailable");
+      expect(persistedProjection).not.toContain("sensitive-provider-canary");
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+
+  it("preserves a successful generate_hypotheses result when abort arrives after artifacts are written", async () => {
+    const controller = new AbortController();
+    let pathsRef!: ReturnType<typeof resolveAppPaths>;
+    const registry = new Registry({
+      generate_hypotheses: {
+        id: "generate_hypotheses",
+        execute: async ({ run }) => {
+          const runRoot = path.join(pathsRef.runsDir, run.id);
+          await fs.mkdir(path.join(runRoot, "hypothesis_generation"), { recursive: true });
+          await fs.mkdir(path.join(runRoot, "drafts"), { recursive: true });
+          await fs.mkdir(path.join(runRoot, "reviews"), { recursive: true });
+          await fs.mkdir(path.join(runRoot, "evidence_axes"), { recursive: true });
+          await fs.writeFile(
+            path.join(runRoot, "hypotheses.jsonl"),
+            `${JSON.stringify({ hypothesis: "Use gradient-boosted trees on tabular baselines." })}\n`,
+            "utf8"
+          );
+          await fs.writeFile(
+            path.join(runRoot, "hypothesis_generation", "status.json"),
+            `${JSON.stringify({ status: "completed" })}\n`,
+            "utf8"
+          );
+          controller.abort();
+          return {
+            status: "success",
+            summary: "Generated hypotheses from the analyzed evidence.",
+            needsApproval: true,
+            toolCallsUsed: 1
+          };
+        }
+      }
+    });
+    const { paths, store, checkpointStore, runtime } = await setup(registry);
+    pathsRef = paths;
+
+    const run = await store.createRun({
+      title: "Hypotheses Abort Ordering",
+      topic: "topic",
+      constraints: [],
+      objectiveMetric: "metric"
+    });
+
+    run.currentNode = "generate_hypotheses";
+    run.graph.currentNode = "generate_hypotheses";
+    run.status = "running";
+    run.graph.nodeStates.collect_papers.status = "completed";
+    run.graph.nodeStates.analyze_papers.status = "completed";
+    await store.updateRun(run);
+
+    const updated = await runtime.step(run.id, controller.signal);
+
+    expect(updated.currentNode).toBe("generate_hypotheses");
+    expect(updated.status).toBe("paused");
+    expect(updated.graph.nodeStates.generate_hypotheses.status).toBe("needs_approval");
+    expect(updated.graph.nodeStates.generate_hypotheses.note).toBe(
+      "Generated hypotheses from the analyzed evidence."
+    );
+    expect(updated.latestSummary).toBe("Generated hypotheses from the analyzed evidence.");
+
+    const persisted = await store.getRun(run.id);
+    expect(persisted?.graph.nodeStates.generate_hypotheses.status).toBe("needs_approval");
+    expect(persisted?.graph.nodeStates.generate_hypotheses.note).toBe(
+      "Generated hypotheses from the analyzed evidence."
+    );
+
+    await expect(fs.readFile(path.join(paths.runsDir, run.id, "hypotheses.jsonl"), "utf8")).resolves.toContain(
+      "gradient-boosted trees"
+    );
+    await expect(
+      readJsonFile<{ status?: string }>(path.join(paths.runsDir, run.id, "hypothesis_generation", "status.json"))
+    ).resolves.toMatchObject({ status: "completed" });
+
+    const latestCheckpoint = await checkpointStore.latest(run.id);
+    expect(latestCheckpoint?.phase).toBe("after");
+    expect(latestCheckpoint?.runSnapshot.graph.nodeStates.generate_hypotheses.status).toBe("needs_approval");
+  });
+
+  it("pauses at generate_hypotheses approval instead of auto-advancing when abort arrives after node success", async () => {
+    const controller = new AbortController();
+    const registry = new Registry({
+      generate_hypotheses: {
+        id: "generate_hypotheses",
+        execute: async () => {
+          controller.abort();
+          return {
+            status: "success",
+            summary: "Generated hypotheses from the analyzed evidence.",
+            needsApproval: true,
+            toolCallsUsed: 1
+          };
+        }
+      }
+    });
+    const { store, runtime } = await setup(registry);
+
+    const run = await store.createRun({
+      title: "Abort Before Auto Approval",
+      topic: "topic",
+      constraints: [],
+      objectiveMetric: "metric"
+    });
+
+    run.currentNode = "generate_hypotheses";
+    run.graph.currentNode = "generate_hypotheses";
+    run.status = "running";
+    run.graph.nodeStates.collect_papers.status = "completed";
+    run.graph.nodeStates.analyze_papers.status = "completed";
+    await store.updateRun(run);
+
+    const updated = await runtime.runUntilPause(run.id, { abortSignal: controller.signal });
+
+    expect(updated.currentNode).toBe("generate_hypotheses");
+    expect(updated.status).toBe("paused");
+    expect(updated.graph.nodeStates.generate_hypotheses.status).toBe("needs_approval");
+    expect(updated.graph.nodeStates.design_experiments.status).toBe("pending");
+
+    const persisted = await store.getRun(run.id);
+    expect(persisted?.currentNode).toBe("generate_hypotheses");
+    expect(persisted?.status).toBe("paused");
+    expect(persisted?.graph.nodeStates.generate_hypotheses.status).toBe("needs_approval");
+    expect(persisted?.graph.nodeStates.design_experiments.status).toBe("pending");
+  });
+
+  it("auto-advances a review approval boundary in hybrid mode when scores are strong", async () => {
+    const registry = new Registry({
+      review: {
+        id: "review",
+        execute: async () => ({
+          status: "success",
+          summary: "review accepted",
+          needsApproval: true,
+          toolCallsUsed: 1,
+          approvalSignal: {
+            source: "review",
+            overall_score: 8,
+            specialist_scores: [4, 4, 5],
+            summary: "Strong review confidence"
+          },
+          transitionRecommendation: {
+            action: "advance",
+            sourceNode: "review",
+            targetNode: "write_paper",
+            reason: "ready for drafting",
+            confidence: 0.9,
+            autoExecutable: true,
+            evidence: [],
+            suggestedCommands: [],
+            generatedAt: new Date().toISOString()
+          }
+        })
+      }
+    });
+    const { store, runtime } = await setupWithOptions(registry, { approvalMode: "hybrid" });
+
+    const run = await store.createRun({
+      title: "Hybrid auto advance",
+      topic: "topic",
+      constraints: [],
+      objectiveMetric: "metric"
+    });
+    run.currentNode = "review";
+    run.graph.currentNode = "review";
+    run.status = "running";
+    for (const node of ["collect_papers", "analyze_papers", "generate_hypotheses", "design_experiments", "implement_experiments", "run_experiments", "analyze_results"] as const) {
+      run.graph.nodeStates[node].status = "completed";
+    }
+    await store.updateRun(run);
+
+    const updated = await runtime.runUntilPause(run.id, {
+      stopAfterApprovalBoundary: true,
+      floorNode: "review"
+    });
+
+    expect(updated.currentNode).toBe("write_paper");
+    expect(updated.status).toBe("running");
+    expect(updated.graph.nodeStates.review.status).toBe("completed");
+  });
+
+  it("pauses a hybrid review approval boundary when the overall score is below threshold", async () => {
+    const registry = new Registry({
+      review: {
+        id: "review",
+        execute: async () => ({
+          status: "success",
+          summary: "review needs work",
+          needsApproval: true,
+          toolCallsUsed: 1,
+          approvalSignal: {
+            source: "review",
+            overall_score: 6,
+            specialist_scores: [4, 4, 5],
+            summary: "Borderline review confidence"
+          },
+          transitionRecommendation: {
+            action: "advance",
+            sourceNode: "review",
+            targetNode: "write_paper",
+            reason: "ready for drafting",
+            confidence: 0.9,
+            autoExecutable: true,
+            evidence: [],
+            suggestedCommands: [],
+            generatedAt: new Date().toISOString()
+          }
+        })
+      }
+    });
+    const { store, runtime } = await setupWithOptions(registry, { approvalMode: "hybrid" });
+
+    const run = await store.createRun({
+      title: "Hybrid pause low score",
+      topic: "topic",
+      constraints: [],
+      objectiveMetric: "metric"
+    });
+    run.currentNode = "review";
+    run.graph.currentNode = "review";
+    run.status = "running";
+    for (const node of ["collect_papers", "analyze_papers", "generate_hypotheses", "design_experiments", "implement_experiments", "run_experiments", "analyze_results"] as const) {
+      run.graph.nodeStates[node].status = "completed";
+    }
+    await store.updateRun(run);
+
+    const updated = await runtime.runUntilPause(run.id, {
+      stopAfterApprovalBoundary: true,
+      floorNode: "review"
+    });
+
+    expect(updated.currentNode).toBe("review");
+    expect(updated.status).toBe("paused");
+    expect(updated.graph.nodeStates.review.status).toBe("needs_approval");
+    expect(updated.graph.nodeStates.review.approvalSignal?.overall_score).toBe(6);
+  });
+
+  it("pauses a hybrid review approval boundary when any specialist score is below threshold", async () => {
+    const registry = new Registry({
+      review: {
+        id: "review",
+        execute: async () => ({
+          status: "success",
+          summary: "review needs specialist follow-up",
+          needsApproval: true,
+          toolCallsUsed: 1,
+          approvalSignal: {
+            source: "review",
+            overall_score: 8,
+            specialist_scores: [4, 3, 5],
+            summary: "One reviewer remains unconvinced"
+          },
+          transitionRecommendation: {
+            action: "advance",
+            sourceNode: "review",
+            targetNode: "write_paper",
+            reason: "ready for drafting",
+            confidence: 0.9,
+            autoExecutable: true,
+            evidence: [],
+            suggestedCommands: [],
+            generatedAt: new Date().toISOString()
+          }
+        })
+      }
+    });
+    const { store, runtime } = await setupWithOptions(registry, { approvalMode: "hybrid" });
+
+    const run = await store.createRun({
+      title: "Hybrid pause specialist score",
+      topic: "topic",
+      constraints: [],
+      objectiveMetric: "metric"
+    });
+    run.currentNode = "review";
+    run.graph.currentNode = "review";
+    run.status = "running";
+    for (const node of ["collect_papers", "analyze_papers", "generate_hypotheses", "design_experiments", "implement_experiments", "run_experiments", "analyze_results"] as const) {
+      run.graph.nodeStates[node].status = "completed";
+    }
+    await store.updateRun(run);
+
+    const updated = await runtime.runUntilPause(run.id, {
+      stopAfterApprovalBoundary: true,
+      floorNode: "review"
+    });
+
+    expect(updated.currentNode).toBe("review");
+    expect(updated.status).toBe("paused");
+    expect(updated.graph.nodeStates.review.status).toBe("needs_approval");
+    expect(updated.graph.nodeStates.review.approvalSignal?.specialist_scores).toEqual([4, 3, 5]);
+  });
+
+  it("clears stale lastError when a node later succeeds", async () => {
+    const registry = new Registry({
+      generate_hypotheses: {
+        id: "generate_hypotheses",
+        execute: async () => ({
+          status: "success",
+          summary: "Generated hypotheses from the analyzed evidence.",
+          needsApproval: true,
+          toolCallsUsed: 1
+        })
+      }
+    });
+    const { store, runtime } = await setup(registry);
+
+    const run = await store.createRun({
+      title: "Clear Success Error",
+      topic: "topic",
+      constraints: [],
+      objectiveMetric: "metric"
+    });
+
+    run.currentNode = "generate_hypotheses";
+    run.graph.currentNode = "generate_hypotheses";
+    run.status = "running";
+    run.graph.nodeStates.collect_papers.status = "completed";
+    run.graph.nodeStates.analyze_papers.status = "completed";
+    run.graph.nodeStates.generate_hypotheses.status = "running";
+    run.graph.nodeStates.generate_hypotheses.lastError = "Unexpected end of JSON input";
+    await store.updateRun(run);
+
+    const updated = await runtime.step(run.id);
+    expect(updated.graph.nodeStates.generate_hypotheses.lastError).toBeUndefined();
+
+    const persisted = await store.getRun(run.id);
+    expect(persisted?.graph.nodeStates.generate_hypotheses.lastError).toBeUndefined();
+  });
+
+  it("clears stale lastError when a node is manually retried", async () => {
+    const { store, runtime } = await setup(new Registry({}));
+
+    const run = await store.createRun({
+      title: "Clear Retry Error",
+      topic: "topic",
+      constraints: [],
+      objectiveMetric: "metric"
+    });
+
+    run.currentNode = "write_paper";
+    run.graph.currentNode = "write_paper";
+    run.status = "failed";
+    run.graph.nodeStates.write_paper.status = "failed";
+    run.graph.nodeStates.write_paper.lastError = "manuscript-quality gate failed";
+    run.graph.nodeStates.write_paper.note = "manuscript-quality gate failed";
+    await store.updateRun(run);
+
+    const retried = await runtime.retryNode(run.id, "write_paper");
+
+    expect(retried.status).toBe("running");
+    expect(retried.graph.nodeStates.write_paper.status).toBe("running");
+    expect(retried.graph.nodeStates.write_paper.note).toBe("manual retry");
+    expect(retried.graph.nodeStates.write_paper.lastError).toBeUndefined();
+
+    const persisted = await store.getRun(run.id);
+    expect(persisted?.graph.nodeStates.write_paper.lastError).toBeUndefined();
+  });
+
+  it("keeps a manual retry as the only active node when an upstream approval pointer is stale", async () => {
+    const registry = new Registry({
+      run_experiments: {
+        id: "run_experiments",
+        execute: async () => ({
+          status: "success",
+          summary: "Execution evidence was persisted.",
+          needsApproval: true,
+          toolCallsUsed: 1
+        })
+      }
+    });
+    const { store, runtime } = await setup(registry);
+
+    const run = await store.createRun({
+      title: "Single Active Retry",
+      topic: "topic",
+      constraints: [],
+      objectiveMetric: "metric"
+    });
+    run.currentNode = "design_experiments";
+    run.graph.currentNode = "design_experiments";
+    run.status = "paused";
+    run.graph.nodeStates.design_experiments.status = "needs_approval";
+    run.graph.nodeStates.design_experiments.note = "An earlier design gate remains unresolved.";
+    await store.updateRun(run);
+
+    const retried = await runtime.retryNode(run.id, "run_experiments");
+
+    expect(retried.currentNode).toBe("run_experiments");
+    expect(retried.graph.nodeStates.run_experiments.status).toBe("running");
+    expect(retried.graph.nodeStates.design_experiments.status).toBe("pending");
+    expect(retried.graph.nodeStates.design_experiments.note).toContain("node remains unresolved");
+    expect(
+      Object.entries(retried.graph.nodeStates)
+        .filter(([, state]) => state.status === "running" || state.status === "needs_approval")
+        .map(([node]) => node)
+    ).toEqual(["run_experiments"]);
+
+    const executed = await runtime.step(run.id);
+    expect(executed.currentNode).toBe("run_experiments");
+    expect(executed.graph.nodeStates.run_experiments.status).toBe("needs_approval");
+
+    const approved = await runtime.approveCurrent(run.id, { continueAfterApprove: false });
+    expect(approved.currentNode).toBe("analyze_results");
+    expect(approved.graph.currentNode).toBe("analyze_results");
+
+    const persisted = await store.getRun(run.id);
+    expect(persisted?.currentNode).toBe("analyze_results");
+    expect(persisted?.graph.currentNode).toBe("analyze_results");
+  });
+
+  it("clears downstream stale lastError values when backward jump resets later nodes", async () => {
+    const { store, runtime } = await setup(new Registry({}));
+
+    const run = await store.createRun({
+      title: "Clear Jump Errors",
+      topic: "topic",
+      constraints: [],
+      objectiveMetric: "metric"
+    });
+
+    run.currentNode = "review";
+    run.graph.currentNode = "review";
+    run.status = "paused";
+    run.graph.nodeStates.collect_papers.status = "completed";
+    run.graph.nodeStates.analyze_papers.status = "completed";
+    run.graph.nodeStates.generate_hypotheses.status = "completed";
+    run.graph.nodeStates.design_experiments.status = "completed";
+    run.graph.nodeStates.implement_experiments.status = "completed";
+    run.graph.nodeStates.implement_experiments.lastError = "Policy blocked command";
+    run.graph.nodeStates.run_experiments.status = "needs_approval";
+    run.graph.nodeStates.run_experiments.lastError = "Policy blocked command";
+    run.graph.nodeStates.analyze_results.status = "completed";
+    run.graph.nodeStates.analyze_results.lastError = "invalid metrics";
+    await store.updateRun(run);
+
+    const jumped = await runtime.jumpToNode(run.id, "design_experiments", "force", "manual backtrack");
+    expect(jumped.graph.nodeStates.implement_experiments.lastError).toBeUndefined();
+    expect(jumped.graph.nodeStates.run_experiments.lastError).toBeUndefined();
+    expect(jumped.graph.nodeStates.analyze_results.lastError).toBeUndefined();
+
+    const persisted = await store.getRun(run.id);
+    expect(persisted?.graph.nodeStates.implement_experiments.lastError).toBeUndefined();
+    expect(persisted?.graph.nodeStates.run_experiments.lastError).toBeUndefined();
+    expect(persisted?.graph.nodeStates.analyze_results.lastError).toBeUndefined();
+  });
+
+  it("backward jump resets the target node itself to pending (LV-019)", async () => {
+    const { store, runtime } = await setup(new Registry({}));
+
+    const run = await store.createRun({
+      title: "LV-019 backward jump target reset",
+      topic: "topic",
+      constraints: [],
+      objectiveMetric: "metric"
+    });
+
+    run.currentNode = "analyze_results";
+    run.graph.currentNode = "analyze_results";
+    run.status = "paused";
+    run.graph.nodeStates.collect_papers.status = "completed";
+    run.graph.nodeStates.analyze_papers.status = "completed";
+    run.graph.nodeStates.generate_hypotheses.status = "completed";
+    run.graph.nodeStates.design_experiments.status = "skipped";
+    run.graph.nodeStates.implement_experiments.status = "completed";
+    run.graph.nodeStates.run_experiments.status = "completed";
+    run.graph.nodeStates.analyze_results.status = "completed";
+    run.graph.retryCounters.design_experiments = 1;
+    run.graph.retryCounters.implement_experiments = 3;
+    run.graph.retryCounters.run_experiments = 2;
+    run.graph.rollbackCounters.implement_experiments = 2;
+    run.graph.rollbackCounters.run_experiments = 1;
+    await store.updateRun(run);
+
+    const jumped = await runtime.jumpToNode(run.id, "design_experiments", "force", "objective not met");
+    // Target node itself must be reset to pending, not stay as skipped
+    expect(jumped.graph.nodeStates.design_experiments.status).toBe("pending");
+    expect(jumped.graph.nodeStates.implement_experiments.status).toBe("pending");
+    expect(jumped.graph.nodeStates.run_experiments.status).toBe("pending");
+    expect(jumped.graph.nodeStates.analyze_results.status).toBe("pending");
+    expect(jumped.graph.retryCounters.design_experiments).toBeUndefined();
+    expect(jumped.graph.retryCounters.implement_experiments).toBeUndefined();
+    expect(jumped.graph.retryCounters.run_experiments).toBeUndefined();
+    expect(jumped.graph.rollbackCounters.implement_experiments).toBeUndefined();
+    expect(jumped.graph.rollbackCounters.run_experiments).toBeUndefined();
+
+    const persisted = await store.getRun(run.id);
+    expect(persisted?.graph.nodeStates.design_experiments.status).toBe("pending");
+    expect(persisted?.graph.retryCounters.implement_experiments).toBeUndefined();
+    expect(persisted?.graph.rollbackCounters.implement_experiments).toBeUndefined();
+  });
+
+  it("resets exhausted state only when a same-node jump starts a new request", async () => {
+    const { store, runtime } = await setup(new Registry({}));
+    const run = await store.createRun({
+      title: "Restart Current Node",
+      topic: "topic",
+      constraints: [],
+      objectiveMetric: "metric"
+    });
+    run.currentNode = "collect_papers";
+    run.graph.currentNode = "collect_papers";
+    run.status = "failed";
+    run.graph.nodeStates.collect_papers.status = "failed";
+    run.graph.nodeStates.collect_papers.lastError = "superseded request failed";
+    run.graph.nodeStates.analyze_papers.status = "failed";
+    run.graph.nodeStates.analyze_papers.lastError = "stale downstream failure";
+    run.graph.retryCounters.collect_papers = 3;
+    run.graph.retryCounters.analyze_papers = 2;
+    run.graph.rollbackCounters.collect_papers = 1;
+    const originalCycle = run.graph.researchCycle;
+    await store.updateRun(run);
+
+    const focused = await runtime.jumpToNode(
+      run.id,
+      "collect_papers",
+      "safe",
+      "focus command"
+    );
+    expect(focused.graph.retryCounters.collect_papers).toBe(3);
+    expect(focused.graph.nodeStates.collect_papers.status).toBe("failed");
+
+    const restarted = await runtime.jumpToNode(
+      run.id,
+      "collect_papers",
+      "safe",
+      "collect command",
+      { resetCurrent: true }
+    );
+    expect(restarted.graph.researchCycle).toBe(originalCycle);
+    expect(restarted.graph.retryCounters.collect_papers).toBeUndefined();
+    expect(restarted.graph.retryCounters.analyze_papers).toBeUndefined();
+    expect(restarted.graph.rollbackCounters.collect_papers).toBeUndefined();
+    expect(restarted.graph.nodeStates.collect_papers.status).toBe("pending");
+    expect(restarted.graph.nodeStates.collect_papers.lastError).toBeUndefined();
+    expect(restarted.graph.nodeStates.analyze_papers.status).toBe("pending");
+    expect(restarted.graph.nodeStates.analyze_papers.lastError).toBeUndefined();
+  });
+
+  it("persists a pending backward transition as one complete run mutation", async () => {
+    const { store, checkpointStore, runtime } = await setup(new Registry({}));
+    const run = await store.createRun({
+      title: "Atomic Backtrack Persistence",
+      topic: "topic",
+      constraints: [],
+      objectiveMetric: "metric"
+    });
+    preparePendingDesignBacktrack(run);
+    await store.updateRun(run);
+
+    const updateRun = vi.spyOn(store, "updateRun");
+    const applied = await runtime.applyPendingTransition(run.id);
+
+    expect(updateRun).toHaveBeenCalledTimes(1);
+    expect(updateRun.mock.calls[0]?.[0]).toMatchObject({
+      currentNode: "design_experiments",
+      status: "paused",
+      graph: {
+        currentNode: "design_experiments",
+        researchCycle: 3,
+        nodeStates: {
+          design_experiments: { status: "pending" },
+          analyze_results: { status: "pending" }
+        },
+        retryCounters: {},
+        rollbackCounters: {},
+        transitionHistory: [
+          {
+            action: "backtrack_to_design",
+            fromNode: "analyze_results",
+            toNode: "design_experiments"
+          }
+        ]
+      }
+    });
+    expect(updateRun.mock.calls[0]?.[0].graph.pendingTransition).toBeUndefined();
+    expect(applied.currentNode).toBe("design_experiments");
+
+    const latestCheckpoint = await checkpointStore.latest(run.id);
+    expect(latestCheckpoint?.phase).toBe("jump");
+    expect(latestCheckpoint?.runSnapshot).toMatchObject({
+      currentNode: "design_experiments",
+      graph: {
+        currentNode: "design_experiments",
+        researchCycle: 3,
+        nodeStates: {
+          design_experiments: { status: "pending" },
+          analyze_results: { status: "pending" }
+        },
+        transitionHistory: [
+          {
+            action: "backtrack_to_design",
+            fromNode: "analyze_results",
+            toNode: "design_experiments"
+          }
+        ]
+      }
+    });
+    expect(latestCheckpoint?.runSnapshot.graph.pendingTransition).toBeUndefined();
+  });
+
+  it("keeps an interrupted pending backtrack retryable so resume cannot bypass it as an advance", async () => {
+    const registry = new Registry({});
+    const { store, checkpointStore, runtime } = await setup(registry);
+    const run = await store.createRun({
+      title: "Interrupted Backtrack Resume",
+      topic: "topic",
+      constraints: [],
+      objectiveMetric: "metric"
+    });
+    preparePendingDesignBacktrack(run);
+    await store.updateRun(run);
+
+    vi.spyOn(checkpointStore, "list").mockRejectedValueOnce(
+      new Error("simulated transition persistence interruption")
+    );
+    await expect(runtime.applyPendingTransition(run.id)).rejects.toThrow(
+      "simulated transition persistence interruption"
+    );
+
+    const interrupted = await store.getRun(run.id);
+    expect(interrupted?.currentNode).toBe("analyze_results");
+    expect(interrupted?.graph.pendingTransition?.targetNode).toBe("design_experiments");
+    expect(interrupted?.graph.transitionHistory).toEqual([]);
+    expect(interrupted?.graph.researchCycle).toBe(2);
+
+    const resumedRuntime = new StateGraphRuntime(
+      store,
+      registry,
+      checkpointStore,
+      new InMemoryEventStream()
+    );
+    const resumed = await resumedRuntime.resume(run.id);
+    expect(resumed.graph.pendingTransition?.targetNode).toBe("design_experiments");
+
+    const applied = await resumedRuntime.approveCurrent(run.id);
+    expect(applied.currentNode).toBe("design_experiments");
+    expect(applied.currentNode).not.toBe("figure_audit");
+    expect(applied.graph.pendingTransition).toBeUndefined();
+    expect(applied.graph.researchCycle).toBe(3);
+    expect(applied.graph.transitionHistory).toHaveLength(1);
+    expect(applied.graph.transitionHistory[0]).toMatchObject({
+      action: "backtrack_to_design",
+      fromNode: "analyze_results",
+      toNode: "design_experiments"
+    });
+  });
+
+  it("runUntilPause returns immediately when run status is already failed", async () => {
+    const registry = new Registry({
+      implement_experiments: {
+        id: "implement_experiments",
+        execute: async () => ({
+          status: "success",
+          summary: "Implemented.",
+          needsApproval: false,
+          toolCallsUsed: 1
+        })
+      }
+    });
+    const { store, runtime } = await setup(registry);
+
+    const run = await store.createRun({
+      title: "Exhausted Retries",
+      topic: "topic",
+      constraints: [],
+      objectiveMetric: "metric"
+    });
+
+    run.currentNode = "implement_experiments";
+    run.graph.currentNode = "implement_experiments";
+    run.status = "failed";
+    run.graph.retryCounters.implement_experiments = 3;
+    run.graph.rollbackCounters.implement_experiments = 2;
+    run.graph.nodeStates.collect_papers.status = "completed";
+    run.graph.nodeStates.analyze_papers.status = "completed";
+    run.graph.nodeStates.generate_hypotheses.status = "completed";
+    run.graph.nodeStates.design_experiments.status = "completed";
+    await store.updateRun(run);
+
+    const updated = await runtime.runUntilPause(run.id);
+    expect(updated.status).toBe("failed");
+
+    const persisted = await store.getRun(run.id);
+    expect(persisted?.status).toBe("failed");
+  });
+
+  it("uses the latest persisted retry state when a stale run_experiments failure arrives", async () => {
+    const { store, runtime } = await setup(new Registry({}));
+
+    const run = await store.createRun({
+      title: "Stale Run Failure",
+      topic: "topic",
+      constraints: [],
+      objectiveMetric: "metric"
+    });
+
+    run.currentNode = "run_experiments";
+    run.graph.currentNode = "run_experiments";
+    run.status = "running";
+    run.graph.retryPolicy.maxAttemptsPerNode = 3;
+    run.graph.retryPolicy.maxAutoRollbacksPerNode = 2;
+    run.graph.retryCounters.run_experiments = 3;
+    run.graph.rollbackCounters.run_experiments = 2;
+    run.graph.nodeStates.collect_papers.status = "completed";
+    run.graph.nodeStates.analyze_papers.status = "completed";
+    run.graph.nodeStates.generate_hypotheses.status = "completed";
+    run.graph.nodeStates.design_experiments.status = "completed";
+    run.graph.nodeStates.implement_experiments.status = "completed";
+    run.graph.nodeStates.run_experiments.status = "running";
+    run.graph.nodeStates.run_experiments.note = "old fatal error";
+    await store.updateRun(run);
+
+    const stale = structuredClone(run);
+    stale.graph.retryCounters.run_experiments = 0;
+    stale.graph.rollbackCounters.run_experiments = 0;
+
+    const failureRuntime = runtime as unknown as {
+      handleFailure(runRecord: RunRecord, node: GraphNodeId, message: string): Promise<RunRecord>;
+    };
+    const updated = await failureRuntime.handleFailure(
+      stale,
+      "run_experiments",
+      "fatal: bounded retry scope did not exceed previous local scope"
+    );
+
+    expect(updated.currentNode).toBe("run_experiments");
+    expect(updated.status).toBe("failed");
+    expect(updated.graph.nodeStates.run_experiments.status).toBe("failed");
+    expect(updated.graph.retryCounters.run_experiments).toBe(3);
+    expect(updated.graph.rollbackCounters.run_experiments).toBe(2);
+  });
+
+  it("does not schedule an auto retry after equivalent failures exhaust retries early", async () => {
+    const { store, runtime } = await setup(new Registry({}));
+
+    const run = await store.createRun({
+      title: "Equivalent Failure Stop",
+      topic: "topic",
+      constraints: [],
+      objectiveMetric: "metric"
+    });
+
+    run.currentNode = "run_experiments";
+    run.graph.currentNode = "run_experiments";
+    run.status = "running";
+    run.graph.retryPolicy.maxAttemptsPerNode = 3;
+    run.graph.retryPolicy.maxAutoRollbacksPerNode = 0;
+    run.graph.nodeStates.collect_papers.status = "completed";
+    run.graph.nodeStates.analyze_papers.status = "completed";
+    run.graph.nodeStates.generate_hypotheses.status = "completed";
+    run.graph.nodeStates.design_experiments.status = "completed";
+    run.graph.nodeStates.implement_experiments.status = "completed";
+    run.graph.nodeStates.run_experiments.status = "running";
+    await store.updateRun(run);
+
+    const errorMessage = "Experiment finished without metrics output at <workspace>/metrics.json";
+    const failureMemory = FailureMemory.forRun(run.id);
+    const fingerprint = buildErrorFingerprint(errorMessage);
+    for (let attempt = 1; attempt <= 3; attempt += 1) {
+      await failureMemory.append({
+        run_id: run.id,
+        node_id: "run_experiments",
+        attempt,
+        failure_class: "equivalent",
+        error_fingerprint: fingerprint,
+        error_message: errorMessage,
+        do_not_retry: true,
+        do_not_retry_reason: "Repeated without improvement."
+      });
+    }
+
+    const failureRuntime = runtime as unknown as {
+      handleFailure(runRecord: RunRecord, node: GraphNodeId, message: string): Promise<RunRecord>;
+    };
+    const updated = await failureRuntime.handleFailure(run, "run_experiments", errorMessage);
+
+    expect(updated.status).toBe("failed");
+    expect(updated.graph.retryCounters.run_experiments).toBe(3);
+    expect(updated.graph.nodeStates.run_experiments.status).toBe("failed");
+    expect(updated.graph.nodeStates.run_experiments.note).toContain("without metrics output");
+  });
+
+  it("does not schedule an auto retry when failure memory marks a node do-not-retry", async () => {
+    const { store, runtime } = await setup(new Registry({}));
+
+    const run = await store.createRun({
+      title: "Structural Metrics Contract Failure",
+      topic: "topic",
+      constraints: [],
+      objectiveMetric: "metric"
+    });
+
+    run.currentNode = "run_experiments";
+    run.graph.currentNode = "run_experiments";
+    run.status = "running";
+    run.graph.retryPolicy.maxAttemptsPerNode = 3;
+    run.graph.retryPolicy.maxAutoRollbacksPerNode = 0;
+    run.graph.nodeStates.collect_papers.status = "completed";
+    run.graph.nodeStates.analyze_papers.status = "completed";
+    run.graph.nodeStates.generate_hypotheses.status = "completed";
+    run.graph.nodeStates.design_experiments.status = "completed";
+    run.graph.nodeStates.implement_experiments.status = "completed";
+    run.graph.nodeStates.run_experiments.status = "running";
+    await store.updateRun(run);
+
+    const errorMessage =
+      "Experiment metrics contract failed: Condition summary accuracy is inconsistent with correct/total counts.";
+    const failureMemory = FailureMemory.forRun(run.id);
+    await failureMemory.append({
+      run_id: run.id,
+      node_id: "run_experiments",
+      attempt: 1,
+      failure_class: "structural",
+      error_fingerprint: buildErrorFingerprint(errorMessage),
+      error_message: errorMessage,
+      do_not_retry: true,
+      do_not_retry_reason: "Structural metrics projection failure."
+    });
+
+    const failureRuntime = runtime as unknown as {
+      handleFailure(runRecord: RunRecord, node: GraphNodeId, message: string): Promise<RunRecord>;
+    };
+    const updated = await failureRuntime.handleFailure(run, "run_experiments", errorMessage);
+
+    expect(updated.status).toBe("failed");
+    expect(updated.graph.retryCounters.run_experiments).toBe(3);
+    expect(updated.graph.nodeStates.run_experiments.status).toBe("failed");
+    expect(updated.graph.nodeStates.run_experiments.note).toContain("Condition summary accuracy");
+  });
+
+  it("routes run_experiments dependency-blocker verifier reports to design repair approval", async () => {
+    const { store, runtime } = await setup(new Registry({}));
+
+    const run = await store.createRun({
+      title: "Dependency Blocker Routing",
+      topic: "topic",
+      constraints: [],
+      objectiveMetric: "metric"
+    });
+
+    run.currentNode = "run_experiments";
+    run.graph.currentNode = "run_experiments";
+    run.status = "running";
+    run.graph.retryPolicy.maxAttemptsPerNode = 3;
+    run.graph.retryPolicy.maxAutoRollbacksPerNode = 1;
+    run.graph.nodeStates.collect_papers.status = "completed";
+    run.graph.nodeStates.analyze_papers.status = "completed";
+    run.graph.nodeStates.generate_hypotheses.status = "completed";
+    run.graph.nodeStates.design_experiments.status = "completed";
+    run.graph.nodeStates.implement_experiments.status = "completed";
+    run.graph.nodeStates.run_experiments.status = "running";
+    await store.updateRun(run);
+
+    const errorMessage =
+      "Experiment dependency blocker: required model/tokenizer asset could not be loaded.";
+    const runDir = path.join(process.cwd(), ".autolabos", "runs", run.id);
+    await fs.mkdir(runDir, { recursive: true });
+    await fs.writeFile(
+      path.join(runDir, "run_experiments_verify_report.json"),
+      JSON.stringify({
+        status: "fail",
+        stage: "metrics",
+        summary: errorMessage,
+        suggested_next_action: "Select an available local dependency before rerunning.",
+        failure_code: "model_dependency_unavailable",
+        repair_target: "environment_dependency",
+        recommended_backtrack_node: "design_experiments",
+        upstream_repair_hint: "Backtrack to design_experiments and choose an available local dependency before rerunning.",
+        operator_action_required: true
+      }, null, 2),
+      "utf8"
+    );
+
+    const failureRuntime = runtime as unknown as {
+      handleFailure(runRecord: RunRecord, node: GraphNodeId, message: string): Promise<RunRecord>;
+    };
+    const updated = await failureRuntime.handleFailure(run, "run_experiments", errorMessage);
+
+    expect(updated.status).toBe("paused");
+    expect(updated.currentNode).toBe("run_experiments");
+    expect(updated.graph.nodeStates.run_experiments.status).toBe("needs_approval");
+    expect(updated.graph.retryCounters.run_experiments).toBe(1);
+    expect(updated.graph.rollbackCounters.run_experiments).toBeUndefined();
+    expect(updated.graph.pendingTransition?.action).toBe("backtrack_to_design");
+    expect(updated.graph.pendingTransition?.targetNode).toBe("design_experiments");
+    expect(updated.graph.pendingTransition?.autoExecutable).toBe(false);
+    expect(updated.graph.pendingTransition?.evidence).toContain("failure_code=model_dependency_unavailable");
+    expect(updated.graph.pendingTransition?.evidence).toContain("repair_target=environment_dependency");
+
+    const applied = await runtime.approveCurrent(run.id);
+    expect(applied.currentNode).toBe("design_experiments");
+    expect(applied.graph.currentNode).toBe("design_experiments");
+    expect(applied.graph.transitionHistory.at(-1)?.action).toBe("backtrack_to_design");
+  });
+
+  it("routes run_experiments data dependency reports to implementation repair approval", async () => {
+    const { store, runtime } = await setup(new Registry({}));
+
+    const run = await store.createRun({
+      title: "Data Dependency Routing",
+      topic: "topic",
+      constraints: [],
+      objectiveMetric: "metric"
+    });
+
+    run.currentNode = "run_experiments";
+    run.graph.currentNode = "run_experiments";
+    run.status = "running";
+    run.graph.nodeStates.collect_papers.status = "completed";
+    run.graph.nodeStates.analyze_papers.status = "completed";
+    run.graph.nodeStates.generate_hypotheses.status = "completed";
+    run.graph.nodeStates.design_experiments.status = "completed";
+    run.graph.nodeStates.implement_experiments.status = "completed";
+    run.graph.nodeStates.run_experiments.status = "running";
+    await store.updateRun(run);
+
+    const errorMessage =
+      "Experiment dependency blocked (data_dependency_unavailable): task-specific data materialization failed.";
+    const runDir = path.join(process.cwd(), ".autolabos", "runs", run.id);
+    await fs.mkdir(runDir, { recursive: true });
+    await fs.writeFile(
+      path.join(runDir, "run_experiments_verify_report.json"),
+      JSON.stringify({
+        status: "fail",
+        stage: "metrics",
+        summary: errorMessage,
+        failure_code: "data_dependency_unavailable",
+        repair_target: "implementation",
+        recommended_backtrack_node: "implement_experiments",
+        upstream_repair_hint: "Repair task-specific data materialization without lowering the evidence floor.",
+        operator_action_required: true
+      }, null, 2),
+      "utf8"
+    );
+
+    const failureRuntime = runtime as unknown as {
+      handleFailure(runRecord: RunRecord, node: GraphNodeId, message: string): Promise<RunRecord>;
+    };
+    const updated = await failureRuntime.handleFailure(run, "run_experiments", errorMessage);
+
+    expect(updated.status).toBe("paused");
+    expect(updated.currentNode).toBe("run_experiments");
+    expect(updated.graph.nodeStates.run_experiments.status).toBe("needs_approval");
+    expect(updated.graph.pendingTransition?.action).toBe("backtrack_to_implement");
+    expect(updated.graph.pendingTransition?.targetNode).toBe("implement_experiments");
+    expect(updated.graph.pendingTransition?.autoExecutable).toBe(false);
+    expect(updated.graph.pendingTransition?.evidence).toContain("failure_code=data_dependency_unavailable");
+    expect(updated.graph.pendingTransition?.evidence).toContain("repair_target=implementation");
+
+    const applied = await runtime.approveCurrent(run.id);
+    expect(applied.currentNode).toBe("implement_experiments");
+    expect(applied.graph.transitionHistory.at(-1)?.action).toBe("backtrack_to_implement");
+  });
+
+  it("skips same-node write_paper retries when strict scientific validation needs upstream evidence", async () => {
+    const { store, runtime } = await setup(new Registry({}));
+
+    const run = await store.createRun({
+      title: "Paper Upstream Evidence Failure",
+      topic: "topic",
+      constraints: [],
+      objectiveMetric: "metric"
+    });
+
+    run.currentNode = "write_paper";
+    run.graph.currentNode = "write_paper";
+    run.status = "running";
+    run.graph.retryPolicy.maxAttemptsPerNode = 3;
+    run.graph.retryPolicy.maxAutoRollbacksPerNode = 1;
+    run.graph.nodeStates.collect_papers.status = "completed";
+    run.graph.nodeStates.analyze_papers.status = "completed";
+    run.graph.nodeStates.generate_hypotheses.status = "completed";
+    run.graph.nodeStates.design_experiments.status = "completed";
+    run.graph.nodeStates.implement_experiments.status = "completed";
+    run.graph.nodeStates.run_experiments.status = "completed";
+    run.graph.nodeStates.analyze_results.status = "completed";
+    run.graph.nodeStates.figure_audit.status = "completed";
+    run.graph.nodeStates.review.status = "completed";
+    run.graph.nodeStates.write_paper.status = "running";
+    await store.updateRun(run);
+
+    const errorMessage =
+      "write_paper generated manuscript artifacts but stopped before PDF build because the scientific quality gate failed in strict-paper mode: Table 1 and Figure 1 report conflicting aggregate primary outcome values. Evidence insufficiency remains in Method; missing categories: resource measurement.";
+
+    const failureRuntime = runtime as unknown as {
+      handleFailure(runRecord: RunRecord, node: GraphNodeId, message: string): Promise<RunRecord>;
+    };
+    const updated = await failureRuntime.handleFailure(run, "write_paper", errorMessage);
+
+    expect(updated.status).toBe("running");
+    expect(updated.currentNode).toBe("review");
+    expect(updated.graph.currentNode).toBe("review");
+    expect(updated.graph.nodeStates.review.status).toBe("running");
+    expect(updated.graph.rollbackCounters.write_paper).toBe(1);
+    expect(updated.graph.retryCounters.write_paper).toBe(0);
+  });
+
+  it("pauses instead of auto-applying backward jump when maxAutoBackwardJumps is reached (LV-015)", async () => {
+    // Node that emits a backward-jump recommendation on analyze_results
+    const registry = new Registry({
+      analyze_results: {
+        id: "analyze_results",
+        execute: async () => ({
+          status: "success",
+          summary: "Analyzed results.",
+          needsApproval: true,
+          toolCallsUsed: 1,
+          transitionRecommendation: {
+            action: "backtrack_to_design",
+            targetNode: "design_experiments" as GraphNodeId,
+            reason: "Objective not met.",
+            confidence: 0.7,
+            autoExecutable: true
+          }
+        })
+      }
+    });
+
+    const { store, runtime } = await setup(registry);
+    const run = await store.createRun({
+      title: "Backward Jump Limit",
+      topic: "topic",
+      constraints: [],
+      objectiveMetric: "metric"
+    });
+
+    // Set up: run is at analyze_results, earlier nodes completed
+    run.currentNode = "analyze_results";
+    run.graph.currentNode = "analyze_results";
+    run.status = "running";
+    run.graph.nodeStates.collect_papers.status = "completed";
+    run.graph.nodeStates.analyze_papers.status = "completed";
+    run.graph.nodeStates.generate_hypotheses.status = "completed";
+    run.graph.nodeStates.design_experiments.status = "completed";
+    run.graph.nodeStates.implement_experiments.status = "completed";
+    run.graph.nodeStates.run_experiments.status = "completed";
+    run.graph.retryPolicy.maxAutoBackwardJumps = 2;
+
+    // Simulate 2 prior backward jumps in transition history
+    run.graph.transitionHistory = [
+      { action: "backtrack_to_design", fromNode: "analyze_results", toNode: "design_experiments", reason: "r1", confidence: 0.7, autoExecutable: true, appliedAt: new Date().toISOString() },
+      { action: "backtrack_to_design", fromNode: "analyze_results", toNode: "design_experiments", reason: "r2", confidence: 0.7, autoExecutable: true, appliedAt: new Date().toISOString() }
+    ];
+    await store.updateRun(run);
+
+    // Run should pause because we've hit the backward jump limit
+    const updated = await runtime.runUntilPause(run.id);
+
+    // Should be paused with the pending transition, NOT auto-applied
+    expect(updated.status).toBe("paused");
+    expect(updated.graph.pendingTransition).toBeDefined();
+    expect(updated.graph.pendingTransition?.targetNode).toBe("design_experiments");
+    // Should NOT have moved backward
+    expect(updated.currentNode).toBe("analyze_results");
+  });
+});

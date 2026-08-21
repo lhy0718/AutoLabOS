@@ -1,0 +1,271 @@
+# Reproducibility Expectations
+
+Reproducibility claims must be backed by concrete artifacts.
+
+## 1) Minimum artifact set (when applicable)
+
+- Runtime event trace (`events.jsonl`)
+- Deferred background recovery record when used (`collect_background_job.json`)
+- Topic-discovery prior-work probe receipt when substantive probes are
+  executable (`collect_prior_work_probe_receipt.json`); its titles are
+  planning hints, not paper evidence
+- Topic-discovery semantic review recovery trace when used
+  (`collect_semantic_review.json`); every attempt must bind to one frozen input
+  hash and one collection attempt without repeating query planning or retrieval
+- Topic-discovery provider coverage in `collect_query_reformulation_hints.json`;
+  when at least half of three or more configured providers are unavailable in
+  every lane, the artifact must record `retrieval_provider_coverage_degraded`
+  with `feedback_applied=false` while the scientific quality gate remains failed
+- Provider request diagnostics must never persist credentials. In particular,
+  authenticated OpenAlex requests may include `OPENALEX_API_KEY` at execution
+  time, but every recorded endpoint must omit the `api_key` query parameter
+- Codex OAuth provider, transport, stream, input-preparation, and observer
+  failure diagnostics persist only an allowlisted safe category. Already-emitted
+  model text remains governed by the existing run-artifact contract. Raw HTTP
+  bodies, streamed error messages, incomplete-response reasons, network exception
+  details, and local input paths must not enter `runs.json`, `run_record.json`,
+  `events.jsonl`, checkpoints, reflexion or failure-memory records, TUI/Web logs,
+  or public output
+- Planned portfolio / trial-group structure (`experiment_portfolio.json`)
+- Run manifest (`run_manifest.json`)
+- Portable primary execution envelope and hash-bound receipt
+  (`execution/execution_envelope.json`,
+  `execution/execution_receipt.json`), plus immutable per-attempt records under
+  `execution/envelopes/` and `execution/receipts/`
+- Matrix trial-group index when managed bundle execution materializes dataset/profile slices (`trial_group_matrix.json`)
+- Per-slice managed trial-group metrics when present (`trial_group_metrics/*.json`)
+- Raw or summarized metrics (`metrics.json`, supplemental metrics)
+- Objective evaluation (`objective_evaluation.json`)
+- Result synthesis (`result_analysis.json`, optional synthesis artifact)
+- Transition decision (`transition_recommendation.json`)
+- Deterministic review gate and, when multi-agent or paper-scale review applies, the bound `ModelReviewBundle`
+- Paper trace outputs (`paper/main.tex`, `paper/references.bib`, `paper/evidence_links.json`)
+
+## 2) Run-state traceability
+
+For each run, preserve:
+
+- run id
+- workflow node progression (`runs.json`) including current node/status, pending transition state, and aggregate usage when available
+- optional operational sqlite index (`.autolabos/runs/runs.sqlite`) when present; treat it as a hot-path mirror of run-index metadata plus usage/checkpoint/event/artifact lookup tables rather than as the sole reproducibility artifact
+- full persisted run snapshot (`.autolabos/runs/<run-id>/run_record.json`) when debugging run-state divergence or replaying control-flow decisions
+- append-only runtime events (`events.jsonl`)
+- key gate/recovery artifacts (`transition_recommendation.json`, `collect_background_job.json` when present)
+- key generated artifacts in `.autolabos/runs/<run_id>/...`, including trial-group matrix artifacts when present
+
+Execution-envelope reproducibility requires more than the files being present:
+
+- Recompute `envelope_sha256` after removing only `envelope_id` and
+  `envelope_sha256`, and require `envelope_id` to match that digest.
+- Recompute `receipt_sha256` after removing only `receipt_sha256` and require
+  its run, phase, attempt, envelope ID, and envelope hash to match the envelope.
+- Keep command paths portable through `${WORKSPACE_ROOT}` and store artifact
+  paths relative to the workspace. Never persist environment values or secrets.
+- Before reusing an execution receipt as scientific evidence, recompute the
+  envelope and receipt hashes, verify their linkage, and re-hash the current
+  input, dependency, and output files from the retained execution workspace.
+  Reject missing, changed, out-of-workspace, or symbolic-link artifacts. A
+  self-consistent failed receipt may remain auditable, but it is not
+  paper-grade evidence. Use `npm run validation:execution-receipt --` with the
+  envelope, receipt, and workspace arguments for this re-audit.
+- Bind image-backed Docker execution to an immutable image ID or digest in the
+  envelope. A mutable tag is diagnostic-only. Mask workspace `.env` files and
+  mount only a credential-scoped regular file from outside the workspace at
+  `/run/secrets`; persist the target and required flag, never the host path or
+  value. Require current-user ownership and no group or other file permissions.
+  Bind its content hash only in the in-memory request, mount a private 0400
+  snapshot, remove the snapshot after container cleanup, scan dotenv paths in
+  all workspace directories, and reject dotenv symlinks.
+- Bind `devices.policy`, `requested_gpu_count`, and concrete visible device IDs
+  in the envelope. CPU-only execution exposes no GPU device. NVIDIA execution
+  is paper-grade eligible only when the declared count and IDs agree and the
+  adapter mounts exactly the selected GPU device nodes plus required control
+  nodes.
+- Treat `partial` and `compatibility` receipts as development diagnostics, not
+  paper-grade execution evidence. A paper-facing execution requires an
+  `enforced` adapter receipt, verified dependency locks, required outputs, and
+  all environment, workspace, input, timeout, network, mount, and device
+  assurances.
+- The local ACI may issue `enforced` only when its `bubblewrap` probe succeeds
+  and the command emits the adapter-controlled in-sandbox start marker. Missing
+  namespace permission, setup failure, or an incomplete GPU device declaration
+  must remain visible as a reason-coded non-paper-grade receipt.
+- The preferred Docker ACI creates one ephemeral container per envelope from
+  `AUTOLABOS_DOCKER_IMAGE`. It may issue `enforced` only when stopped-state
+  pre/post `docker container inspect` observations match and both satisfy the
+  envelope: non-root and non-privileged execution, read-only root filesystem,
+  dropped capabilities, `no-new-privileges`, a read-only workspace plus
+  writable-root overlays, requested network mode, and exact CPU/NVIDIA device
+  exposure. The process environment must be rebuilt through `env -i`, the
+  image must be immutably bound in the envelope, any workspace dotenv file must
+  be masked, declared secret files must be exact read-only mounts, the command
+  must complete without timeout, and container plus secret-snapshot cleanup
+  must succeed. Container-controlled stderr is never a trusted timeout signal.
+  Preserve the hashed pre/post boundary fingerprints, stability verdict,
+  immutable-image verdict, and cleanup verdict in `runtime_evidence`; receipt
+  re-audit must independently derive paper eligibility from those fields.
+  This is a content-bound local-executor record, not a third-party signature or
+  protection against an operator who can rewrite repository history.
+  The inspected
+  `DOCKER=<container>` path remains compatibility-only for already-running
+  targets. Inspection or policy failure blocks the command; it must not fall
+  back to host execution.
+- Before execution, `/doctor` must report a passing
+  `docker-execution-boundary` check for Docker dependency mode. This preflight
+  does not replace command-level device verification or the hash-bound
+  receipt. In image-backed mode it must complete ephemeral create, boundary,
+  execution, stopped-state, and cleanup checks; in compatibility mode it
+  prevents a configured container name from being mistaken for verified
+  isolation.
+- Remote and plan-only profiles remain fail-closed until a dedicated adapter
+  can emit equivalent independently checkable assurances.
+
+## 3) Model-review reproducibility
+
+Model-assisted review is reproducible only when its inputs, topology, and
+provenance are inspectable:
+
+- Freeze the exact deterministic `GateReport` bytes and record their SHA-256.
+- Require fresh `EvidenceBundle.files` and `GateReport.input_bindings` entries
+  with portable path, byte count, and SHA-256 for every available audited
+  input. External intake must record matching `copied_file_bindings` and
+  portable source-to-copy mappings, and the gate must bind the exact
+  `EvidenceBundle` byte digest.
+- Treat every present reviewed input as required. The audit summary must
+  enumerate the complete required artifact contract and its per-path status;
+  a generic missing-count message is not a reproducible inventory.
+- Record a closed, ordered input manifest with path, media type, source kind,
+  byte count, and SHA-256 for every reviewed artifact.
+- Persist the runtime review chain:
+  `review_input_snapshot.json`, `review_input_manifest.json`,
+  `review_gate_report.json`, `review_assurance.json`, and
+  `review_handoff.json`. The handoff must bind the exact assurance,
+  pre-draft critique, review decision, and review packet bytes.
+- Revalidate that chain immediately before `write_paper`. Any changed bound
+  input or review output blocks drafting and requires a fresh review; downstream
+  checks must not overwrite review-bound upstream artifacts.
+- Bind each of the five required initial role outputs to the same gate and input
+  hashes. Record `initial_output_shared=false`, distinct execution IDs, and one
+  parallel-group ID; no initial input may contain peer output.
+- Record provider, model ID and revision when available, requested and effective
+  reasoning tier, executor, attempt, timestamps, prompt hash, tool/source-access
+  policy, status, and output hash for every initial and meta review.
+- Start the meta reviewer only after all five initial outputs are validated.
+  Bind the exact five output hashes, preserve disagreements and unresolved
+  positions, and keep the effective ceiling at or below the `A0` ceiling.
+- Bind the exact supplied bundle bytes into
+  `ReviewReport.reviewer_assurance.model_review_bundle_sha256` and require
+  `can_promote=false`, `can_downgrade=true`, and `human_authority=false`.
+- Preserve every raw specialist finding in `ModelReviewBundle`, but project
+  only the meta reviewer's adopted findings into `ReviewReport`, readiness,
+  and repair targets. Record both specialist and adjudicated finding counts.
+- If the gate bytes or any input bytes change, invalidate the bundle and rerun
+  the entire panel. Reusing prose against a new hash is not reproducible review.
+- A paper-scale review manifest must contain the exact gate, exact evidence
+  bundle, and every gate input binding. A present path string that is absent
+  from this frozen inventory cannot count as claim support.
+- Do not encode absent or unmeasured evidence as a successful zero. Missing,
+  malformed, or ablated figure evidence uses null measurements and remains a
+  promotion blocker; paper-ready-only done-condition checks are explicitly
+  not evaluated when promotion was not requested.
+- Keep prospective blocked claims separate from asserted unsupported claims in
+  aggregate metrics. Preserve their missing-evidence blockers and do not treat
+  that accounting separation as evidence or readiness promotion.
+- Keep model review (`A1`/`A2`) separate from human review (`A3`). Model output
+  cannot create human attestation, final approval, external evidence, or legal
+  or redistribution permission.
+
+Candidate, reference, and license screening may be automated when the result is
+explicitly model-authored and hash-bound. Citation findings must record the
+directly read full-text hash and exact evidence location. License findings must
+bind direct public license evidence; otherwise portability remains
+`local_only` or `uncertain`. Private full text may remain outside a public
+bundle, but its hash and evidence location must remain verifiable by an
+authorized reviewer.
+
+The complete `ModelReviewBundle` field and verifier contract is defined in
+`docs/model-review-protocol.md`.
+
+## 4) Reproducibility claim language
+
+- If required artifacts are missing, do not claim reproducibility is satisfied.
+- Use weaker language when evidence is partial.
+
+## 5) Validation workspace location
+
+Validation and test runs should not write transient state into the repository checkout.
+
+- The default validation workspace root is the sibling `.autolabos-validation/`
+  directory next to the repo root. If the repo is checked out under the user's
+  home directory, this is commonly `~/.autolabos-validation/`.
+- Set `AUTOLABOS_VALIDATION_WORKSPACE_ROOT` to override that root.
+- `npm test` sets `TMPDIR`, `TMP`, and `TEMP` to
+  `<validation-workspace>/.tmp`.
+- Vitest owns only its generated `.tmp/run-*` directory. Global test
+  setup/teardown must preserve every direct child of the validation root
+  because named children may contain resumable real TUI/web runs.
+- Live fixture workspaces are created under `<validation-workspace>/.live/`.
+- Real TUI/web validation workspaces should live under the validation root, with
+  run artifacts in `<validation-workspace>/.autolabos/...` and public outputs in
+  `<validation-workspace>/outputs/...`.
+
+## 6) Contributor workflow
+
+Before marking work complete:
+
+1. Re-run the relevant flow or tests.
+2. Confirm expected artifacts are present, parseable, and consistent across `runs.json`, `run_record.json` when present, optional `runs.sqlite` mirrors/indexes, `events.jsonl`, checkpoints, and other run-scoped artifacts.
+3. Record limitations and unresolved uncertainty.
+
+For long-running or resumed runs, `npm run validate:harness` also audits checkpoint/resume consistency across `runs.json`, `run_record.json`, `checkpoints/latest.json`, and numbered checkpoint records when those surfaces exist. This audit is not evidence of month-long autonomous completion; it only verifies that restart-critical state is inspectable and monotonic enough to investigate or resume safely.
+
+## 7) Validation surfaces
+
+- Runtime diagnostics: default `/doctor` and `GET /api/doctor` perform local
+  environment and workspace harness checks, including non-mutating promotion
+  source lock freshness and holder diagnostics, without sending a live Codex
+  chat or generation request. Existing non-generation diagnostics may still
+  query a configured local runtime for health or model availability. The exact TUI
+  command `/doctor --live-provider` and the explicit Web Doctor action each opt
+  into one fixed, non-user Codex chat request using the configured `chat_model`,
+  with `model` used only when `chat_model` is absent. The request has no retry,
+  may consume provider quota, and returns only a bounded safe status without
+  persisting provider output, response bodies, or credentials.
+- CI/internal gate: `npm run validate:harness` (issue log format + workspace/test run artifact structure, including event logs and portfolio/manifest contracts).
+- Research governance process gate: run `npm run build` followed by `npm run validate:research-governance` to execute `research new`, weak-input `audit/review/improve/pack`, and structurally complete `audit/review/pack` as separate CLI processes. The gate invokes `research verify-pack` on both outputs and verifies honest downgrade, claim ceiling, a closed regular-file inventory, portable paths, byte counts, SHA-256 hashes, and gate/review/bundle bindings in a validation workspace outside the checkout. It also confirms that an unbound added file makes verification fail.
+- Distributed bundle check: run `autolabos research verify-pack --root <paper-readiness-bundle-dir>` before transfer or review. A passing result means the packaged bytes and governance bindings are internally intact and portable; it does not upgrade the bundle's readiness class or establish missing experimental evidence.
+- Closed evidence inventory: `research pack` copies every regular file bound by `GateReport.input_bindings` into `artifacts/evidence/`, rechecks its byte count and SHA-256 before copying, and fails when a bound file is missing, changed, non-portable, or sensitive. Raw provider responses or licensed source material must be omitted from the audit support manifest and represented by a public aggregate receipt plus a source hash.
+- Evidence-blocked genre: a run may declare `paper_ready=false`, `readiness_state=evidence_blocked`, and `publication_artifact_type=evidence_blocked_report`. The governed artifact contract then requires `paper/draft.md` instead of `paper/main.tex`; the audit emits `claim_ceiling=evidence_blocked_report_only`, remains blocked for manuscript promotion, and produces no repair target for the terminal status itself.
+- Plugin bridge CI gate: after the build, run `npm run validate:plugin-bridge` to execute the same acceptance scenario through the repo plugin bridge and a deterministic built-CLI proxy. This proves bridge delegation and artifact behavior without requiring Codex to be installed in CI; it does not prove that a workstation's installed plugin cache is current.
+- Installed plugin acceptance: on a Codex-enabled workstation, run `npm run validate:plugin-bridge:local`. It requires local discovery and cache/repo bridge hash alignment, then executes the full acceptance scenario through the installed cache bridge. Do not add this command to generic CI.
+- Plugin operations preflight: run `npm run validate:plugin-operations` in CI to aggregate direct, repo bridge, hermetic cache, and fault gates. Run `npm run validate:plugin-operations:local` on a Codex-enabled workstation to add installed bridge and discovery gates. Any required failure keeps the aggregate verdict at `fail`.
+
+The opt-in live-provider result establishes only one-shot chat compatibility;
+it does not establish research execution, PDF generation, sustained-run
+reliability, or paper readiness. Maintainers should still run
+`npm run validate:harness` before declaring artifact-level reproducibility
+complete.
+
+## 8) Dependency install-script policy
+
+Dependency install scripts are executable supply-chain inputs. The root and
+`web/` packages therefore keep separate, version-pinned `allowScripts`
+decisions in their respective `package.json` files.
+
+- Every package marked with `hasInstallScript=true` in either lockfile must
+  have an explicit decision, including platform-specific optional packages.
+- Approvals use `package@version` keys. A dependency version change requires
+  a fresh review instead of inheriting approval by package name.
+- Review the resolved package, lifecycle command, upstream repository, and
+  runtime purpose before approving it.
+- Run `npm install-scripts ls` in the root and
+  `npm --prefix web install-scripts ls` for the web package. Both must report
+  no unreviewed packages on npm versions that support this command.
+- Run clean `npm ci` installations for both package roots, then verify the
+  native module or binary through the normal build and test flow.
+- Keep `tests/npmInstallScriptPolicy.test.ts` passing so the approval lists
+  remain complete and contain no stale entries.
+
+A deprecation warning alone does not justify an override or unsupported major
+upgrade. Remove a deprecated transitive package only through a compatible
+upstream release, or document the remaining upstream constraint.

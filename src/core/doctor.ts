@@ -1,0 +1,1336 @@
+import path from "node:path";
+import { spawn } from "node:child_process";
+import { promises as fs } from "node:fs";
+
+import { resolveAppPaths } from "../config.js";
+import { resolveDockerExecTarget } from "../runtime/executionProfile.js";
+import {
+  DoctorCheck,
+  DoctorCheckStatus,
+  ExecutionApprovalMode,
+  ExperimentNetworkPolicy,
+  ExperimentNetworkPurpose,
+  WorkflowApprovalMode
+} from "../types.js";
+import type { AciExecutionEnvelopeRequest, AciObservation } from "../tools/aci.js";
+import {
+  buildDockerCreateExecutionPlan,
+  parseDockerContainerInspection,
+  validateDockerExecutionBoundary
+} from "../tools/dockerExecution.js";
+import { CodexNativeClient } from "../integrations/codex/codexCliClient.js";
+import type { CodexOAuthCompatibilityProbeStatus } from "../integrations/codex/oauthResponsesTextClient.js";
+import { checkCodexOAuthStatus } from "../integrations/codex/oauthAuth.js";
+import { RECOMMENDED_CODEX_MODEL } from "../integrations/codex/modelCatalog.js";
+import { OllamaClient } from "../integrations/ollama/ollamaClient.js";
+import {
+  HarnessValidationReport,
+  runHarnessValidation
+} from "./validation/harnessValidationService.js";
+import {
+  buildBriefCompletenessArtifact,
+  validateResearchBriefMarkdown
+} from "./runs/researchBriefFiles.js";
+import {
+  inspectPromotionSourceLocks,
+  type PromotionSourceLockDiagnostic
+} from "./runs/topicProbePromotionSourceLock.js";
+
+export interface DoctorRunOptions {
+  llmMode?: "codex" | "codex_chatgpt_only" | "openai_api" | "ollama";
+  pdfAnalysisMode?: "codex_text_image_hybrid" | "responses_api_pdf" | "ollama_vision";
+  openAiApiKeyConfigured?: boolean;
+  openAlexApiKeyConfigured?: boolean;
+  semanticScholarApiKeyConfigured?: boolean;
+  codexResearchModel?: string;
+  liveProviderProbe?: {
+    model: string;
+    timeoutMs?: number;
+    abortSignal?: AbortSignal;
+  };
+  ollamaBaseUrl?: string;
+  ollamaChatModel?: string;
+  ollamaResearchModel?: string;
+  ollamaVisionModel?: string;
+  workspaceRoot?: string;
+  includeHarnessValidation?: boolean;
+  includeHarnessTestRecords?: boolean;
+  maxHarnessFindings?: number;
+  approvalMode?: WorkflowApprovalMode;
+  executionApprovalMode?: "manual" | "risk_ack" | "full_auto";
+  dependencyMode?: "local" | "docker" | "remote_gpu" | "plan_only";
+  sessionMode?: "fresh" | "existing";
+  codeExecutionExpected?: boolean;
+  candidateIsolation?: "attempt_snapshot_restore" | "attempt_worktree";
+  manualOverride?: boolean;
+  researchBriefPath?: string;
+  /** @deprecated Compatibility-only. Network access is no longer controlled by this boolean. */
+  allowNetwork?: boolean;
+  networkPolicy?: ExperimentNetworkPolicy;
+  networkPurpose?: ExperimentNetworkPurpose;
+  dockerExecutable?: string;
+  dockerImage?: string;
+  dockerTarget?: string;
+  processEnvironment?: NodeJS.ProcessEnv;
+}
+
+export interface DoctorReport {
+  checks: DoctorCheck[];
+  harness?: HarnessValidationReport;
+  readiness: DoctorReadinessSnapshot;
+}
+
+export interface ParsedDoctorCommandArgs {
+  liveProvider: boolean;
+  error?: string;
+}
+
+export type DoctorAggregateStatus = "ok" | "warn" | "fail";
+
+export interface DoctorReadinessSnapshot {
+  generatedAt: string;
+  workspaceRoot: string;
+  workspaceProbePath: string;
+  blocked: boolean;
+  llmMode?: "codex" | "codex_chatgpt_only" | "openai_api" | "ollama";
+  pdfAnalysisMode?: "codex_text_image_hybrid" | "responses_api_pdf" | "ollama_vision";
+  approvalMode: WorkflowApprovalMode;
+  executionApprovalMode: "manual" | "risk_ack" | "full_auto";
+  dependencyMode: "local" | "docker" | "remote_gpu" | "plan_only";
+  sessionMode: "fresh" | "existing";
+  candidateIsolation?: "attempt_snapshot_restore" | "attempt_worktree";
+  networkPolicy?: ExperimentNetworkPolicy;
+  networkPurpose?: ExperimentNetworkPurpose;
+  networkDeclarationPresent: boolean;
+  networkApprovalSatisfied: boolean;
+  containerizationRequired: boolean;
+  webRestrictionRequired: boolean;
+  manualOverride: boolean;
+  researchBriefPath?: string;
+  researchBriefContractReady?: boolean;
+  researchBriefMissingSections?: string[];
+  warningChecks: string[];
+  failedChecks: string[];
+}
+
+interface RunsFileSnapshot {
+  runs?: Array<{ id?: string; updatedAt?: string }>;
+}
+
+interface CompiledPageValidationSnapshot {
+  status?: string;
+  minimum_main_pages?: number;
+  target_main_pages?: number;
+  main_page_limit?: number;
+  compiled_pdf_page_count?: number | null;
+  message?: string;
+}
+
+const MINIMUM_DOCTOR_FREE_SPACE_BYTES = 500 * 1024 * 1024;
+
+export async function runDoctorReport(
+  codex: CodexNativeClient,
+  opts?: DoctorRunOptions
+): Promise<DoctorReport> {
+  const checks: DoctorCheck[] = [];
+  const workspaceRoot = opts?.workspaceRoot || process.cwd();
+  const paths = resolveAppPaths(workspaceRoot);
+  const approvalMode = normalizeDoctorApprovalMode(opts?.approvalMode);
+  const executionApprovalMode = normalizeExecutionApprovalMode(opts?.executionApprovalMode);
+  const dependencyMode = normalizeDependencyMode(opts?.dependencyMode);
+  const sessionMode = opts?.sessionMode === "existing" ? "existing" : "fresh";
+  const localIsolationConfigured = Boolean(opts?.candidateIsolation);
+  const containerizationRequired = Boolean(
+    opts?.codeExecutionExpected && (dependencyMode === "docker" || dependencyMode === "remote_gpu")
+  );
+  const webRestrictionRequired = Boolean(opts?.codeExecutionExpected && dependencyMode !== "plan_only");
+  const networkPolicy = normalizeDoctorNetworkPolicy(opts?.networkPolicy, opts?.networkPurpose);
+  const networkPurpose = normalizeDoctorNetworkPurpose(opts?.networkPurpose);
+  const networkDeclarationPresent =
+    !networkPolicy || networkPolicy === "blocked" || Boolean(networkPolicy && networkPurpose);
+  const networkApprovalSatisfied =
+    !networkPolicy || networkPolicy === "blocked" || executionApprovalMode === "manual" || executionApprovalMode === "risk_ack";
+  const manualOverride = opts?.manualOverride === true;
+  const requiresCodexChecks =
+    !opts ||
+    opts.llmMode === "codex" ||
+    opts.llmMode === "codex_chatgpt_only" ||
+    opts.pdfAnalysisMode === "codex_text_image_hybrid";
+
+  if (requiresCodexChecks) {
+    const oauth = await checkCodexOAuthStatus();
+    checks.push({ name: "codex-oauth", ok: oauth.ok, detail: oauth.detail });
+
+    if (typeof codex.checkEnvironmentReadiness === "function") {
+      const codexEnvironmentChecks = await codex.checkEnvironmentReadiness();
+      checks.push(
+        ...codexEnvironmentChecks.map((check) => ({
+          name: check.name,
+          ok: check.ok,
+          detail: check.detail
+        }))
+      );
+    }
+  }
+
+  if ((opts?.llmMode === "codex" || opts?.llmMode === "codex_chatgpt_only") && opts.codexResearchModel) {
+    checks.push(buildCodexModelCheck("codex-research-backend-model", "research backend", opts.codexResearchModel));
+  }
+
+  if (opts?.liveProviderProbe) {
+    checks.push(await runCodexChatProviderCompatibilityCheck(codex, opts.liveProviderProbe));
+  }
+
+  checks.push(await runConfigExistsCheck(paths.configFile));
+
+  const runsDirWriteProbe = await probeRunsDirectoryWriteability(paths.runsDir);
+  checks.push({
+    name: "runs-dir-write",
+    ok: runsDirWriteProbe.ok,
+    detail: runsDirWriteProbe.ok
+      ? `Run store write probe succeeded at ${runsDirWriteProbe.probePath}`
+      : `Run store write probe failed at ${runsDirWriteProbe.probePath}: ${runsDirWriteProbe.detail}`
+  });
+
+  checks.push(await runDiskFreeSpaceCheck(workspaceRoot));
+  checks.push(runNodeVersionCheck(readCurrentNodeVersion()));
+  checks.push(await runPromotionSourceLockCheck(workspaceRoot));
+
+  const workspaceWriteProbe = await probeWorkspaceWriteability(workspaceRoot);
+  checks.push({
+    name: "workspace-write",
+    ok: workspaceWriteProbe.ok,
+    detail: workspaceWriteProbe.ok
+      ? `Workspace write probe succeeded at ${workspaceWriteProbe.probePath}`
+      : `Workspace write probe failed at ${workspaceWriteProbe.probePath}: ${workspaceWriteProbe.detail}`
+  });
+  checks.push({
+    name: "web-access",
+    ok: dependencyMode !== "plan_only",
+    detail:
+      dependencyMode !== "plan_only"
+        ? `Web access is expected for dependency mode ${dependencyMode}.`
+        : "Plan-only mode selected; external web access is not required."
+  });
+  checks.push({
+    name: "dependency-mode",
+    ok: true,
+    detail: `Run dependency mode: ${dependencyMode}`
+  });
+  checks.push({
+    name: "session-mode",
+    ok: true,
+    detail: `Session mode: ${sessionMode}`
+  });
+  checks.push({
+    name: "approval-mode",
+    ok: true,
+    detail: `Workflow approval mode: ${approvalMode}`
+  });
+  checks.push({
+    name: "execution-approval-mode",
+    ok: !(executionApprovalMode === "full_auto" && dependencyMode !== "plan_only"),
+    detail:
+      executionApprovalMode === "full_auto" && dependencyMode !== "plan_only"
+        ? "Execution approval mode full_auto is only valid for smoke/plan-only work; use manual or risk_ack here."
+        : `Execution approval mode: ${executionApprovalMode}`
+  });
+  const dockerBoundaryCheck = opts?.codeExecutionExpected && dependencyMode === "docker"
+    ? await runDockerExecutionBoundaryCheck({
+        workspaceRoot,
+        networkPolicy: networkPolicy || "blocked",
+        dockerExecutable: opts.dockerExecutable,
+        dockerImage: opts.dockerImage,
+        dockerTarget: opts.dockerTarget,
+        processEnvironment: opts.processEnvironment
+      })
+    : undefined;
+  if (dockerBoundaryCheck) {
+    checks.push(dockerBoundaryCheck);
+  }
+  if (opts?.codeExecutionExpected) {
+    const containerizationSatisfied = dependencyMode === "docker"
+      ? dockerBoundaryCheck?.ok === true
+      : dependencyMode === "remote_gpu"
+        ? false
+        : localIsolationConfigured;
+    checks.push({
+      name: "experiment-containerization",
+      ok: containerizationSatisfied,
+      detail: dependencyMode === "docker"
+        ? containerizationSatisfied
+          ? "Code execution is expected and the configured Docker target passed boundary inspection."
+          : "Code execution is expected but the configured Docker target did not pass boundary inspection."
+        : dependencyMode === "remote_gpu"
+          ? "Code execution is expected but the remote profile has no enforced execution adapter."
+          : localIsolationConfigured
+          ? `Code execution is expected and local repository isolation is configured via ${opts?.candidateIsolation}.`
+          : "Code execution is expected but no candidate isolation strategy is configured."
+    });
+    checks.push({
+      name: "experiment-web-restriction",
+      ok: !webRestrictionRequired || networkDeclarationPresent,
+      status: resolveExperimentWebRestrictionStatus({
+        webRestrictionRequired,
+        networkPolicy,
+        networkPurpose,
+        networkDeclarationPresent,
+        networkApprovalSatisfied
+      }),
+      detail: buildExperimentWebRestrictionDetail({
+        webRestrictionRequired,
+        networkPolicy,
+        networkPurpose,
+        networkDeclarationPresent,
+        executionApprovalMode
+      })
+    });
+  }
+  checks.push({
+    name: "manual-override",
+    ok: !manualOverride,
+    detail: manualOverride
+      ? "manual_override is enabled for this workspace/run. Revalidate before treating the run as ready."
+      : "No manual override is active."
+  });
+
+  const researchBriefCheck = await runResearchBriefContractCheck(opts?.researchBriefPath, workspaceRoot);
+  if (researchBriefCheck) {
+    checks.push(researchBriefCheck.check);
+  }
+
+  checks.push(await runBinaryCheck("python3", ["--version"], "python"));
+  checks.push(await runBinaryCheck("pip3", ["--version"], "pip"));
+  checks.push(await runBinaryCheck("pdflatex", ["--version"], "latex"));
+  if (opts?.pdfAnalysisMode === "codex_text_image_hybrid" || opts?.pdfAnalysisMode === "ollama_vision") {
+    checks.push(await runBinaryCheck("pdftotext", ["-v"], "pdftotext"));
+    checks.push(await runBinaryCheck("pdfinfo", ["-v"], "pdfinfo"));
+    checks.push(await runBinaryCheck("pdftoppm", ["-v"], "pdftoppm"));
+  }
+  if (opts?.llmMode === "openai_api" || opts?.pdfAnalysisMode === "responses_api_pdf") {
+    checks.push({
+      name: "openai-api-key",
+      ok: opts.openAiApiKeyConfigured === true,
+      detail:
+        opts.openAiApiKeyConfigured === true
+          ? "OPENAI_API_KEY detected"
+          : opts?.llmMode === "openai_api"
+            ? "OPENAI_API_KEY missing (required for OpenAI API provider mode)"
+            : "OPENAI_API_KEY missing (required for Responses API PDF analysis)"
+    });
+  }
+
+  if (typeof opts?.openAlexApiKeyConfigured === "boolean") {
+    checks.push({
+      name: "openalex-api-key",
+      ok: true,
+      status: opts.openAlexApiKeyConfigured ? "ok" : "warning",
+      detail: opts.openAlexApiKeyConfigured
+        ? "OPENALEX_API_KEY detected"
+        : "OPENALEX_API_KEY missing; OpenAlex discovery may be rate limited, but fallback providers remain available."
+    });
+  }
+
+  if (typeof opts?.semanticScholarApiKeyConfigured === "boolean") {
+    checks.push({
+      name: "semantic-scholar-api-key",
+      ok: true,
+      status: opts.semanticScholarApiKeyConfigured ? "ok" : "warning",
+      detail: opts.semanticScholarApiKeyConfigured
+        ? "SEMANTIC_SCHOLAR_API_KEY detected"
+        : "SEMANTIC_SCHOLAR_API_KEY missing; Semantic Scholar discovery may be rate limited, but fallback providers remain available."
+    });
+  }
+
+  if (opts?.llmMode === "ollama" || opts?.pdfAnalysisMode === "ollama_vision") {
+    const ollamaUrl = opts?.ollamaBaseUrl || "http://127.0.0.1:11434";
+    checks.push({
+      name: "ollama-base-url",
+      ok: Boolean(ollamaUrl),
+      detail: `Ollama base URL: ${ollamaUrl}`
+    });
+
+    const ollamaClient = new OllamaClient(ollamaUrl);
+    const health = await ollamaClient.checkHealth();
+    checks.push({
+      name: "ollama-server",
+      ok: health.reachable,
+      detail: health.reachable
+        ? `Ollama server reachable${health.version ? ` (${health.version})` : ""}`
+        : `Ollama server unreachable at ${ollamaUrl}: ${health.error || "unknown error"}. Run 'ollama serve' to start.`
+    });
+
+    if (health.reachable) {
+      try {
+        const models = await ollamaClient.listModels();
+        const modelNames = models.map((m) => m.name);
+        const modelsToCheck = [
+          { name: "ollama-chat-model", model: opts?.ollamaChatModel, label: "chat" },
+          { name: "ollama-research-model", model: opts?.ollamaResearchModel, label: "research" },
+          { name: "ollama-vision-model", model: opts?.ollamaVisionModel, label: "vision" }
+        ];
+        for (const { name, model, label } of modelsToCheck) {
+          if (!model) continue;
+          const found = modelNames.some(
+            (n) => n === model || n === `${model}:latest` || n.startsWith(`${model}:`)
+          );
+          checks.push({
+            name,
+            ok: found,
+            detail: found
+              ? `Ollama ${label} model '${model}' is available`
+              : `Ollama ${label} model '${model}' not found. Run 'ollama pull ${model}' to install.`
+          });
+        }
+      } catch (err) {
+        checks.push({
+          name: "ollama-models",
+          ok: false,
+          detail: `Could not list Ollama models: ${err instanceof Error ? err.message : String(err)}`
+        });
+      }
+    }
+  }
+
+  const pageBudgetCheck = await loadLatestPaperPageBudgetCheck(opts?.workspaceRoot || process.cwd());
+  if (pageBudgetCheck) {
+    checks.push(pageBudgetCheck);
+  }
+
+  const includeHarnessValidation = opts?.includeHarnessValidation !== false;
+  const harness = includeHarnessValidation
+    ? await runHarnessValidation({
+        workspaceRoot,
+        includeWorkspaceRuns: true,
+        includeTestRunStores: opts?.includeHarnessTestRecords === true,
+        maxFindings: opts?.maxHarnessFindings || 60
+      })
+    : undefined;
+
+  const normalizedChecks = checks.map(normalizeDoctorCheck);
+  const failedChecks = normalizedChecks
+    .filter((check) => getDoctorCheckStatus(check) === "fail")
+    .map((check) => check.name);
+  const warningChecks = normalizedChecks
+    .filter((check) => getDoctorCheckStatus(check) === "warning")
+    .map((check) => check.name);
+  return {
+    checks: normalizedChecks,
+    harness,
+    readiness: {
+      generatedAt: new Date().toISOString(),
+      workspaceRoot,
+      workspaceProbePath: workspaceWriteProbe.probePath,
+      blocked: failedChecks.length > 0 || harness?.status === "fail",
+      llmMode: opts?.llmMode,
+      pdfAnalysisMode: opts?.pdfAnalysisMode,
+      approvalMode,
+      executionApprovalMode,
+      dependencyMode,
+      sessionMode,
+      candidateIsolation: opts?.candidateIsolation,
+      networkPolicy,
+      networkPurpose,
+      networkDeclarationPresent,
+      networkApprovalSatisfied,
+      containerizationRequired,
+      webRestrictionRequired,
+      manualOverride,
+      researchBriefPath: researchBriefCheck?.resolvedPath,
+      researchBriefContractReady: researchBriefCheck?.contractReady,
+      researchBriefMissingSections: researchBriefCheck?.missingSections,
+      warningChecks,
+      failedChecks: [
+        ...failedChecks,
+        ...(harness?.status === "fail" ? ["harness-validation"] : [])
+      ]
+    }
+  };
+}
+
+export async function runDoctor(
+  codex: CodexNativeClient,
+  opts?: DoctorRunOptions
+): Promise<DoctorCheck[]> {
+  const report = await runDoctorReport(codex, opts);
+  return report.checks;
+}
+
+export async function runDockerExecutionBoundaryCheck(input: {
+  workspaceRoot: string;
+  networkPolicy: ExperimentNetworkPolicy;
+  dockerExecutable?: string;
+  dockerImage?: string;
+  dockerTarget?: string;
+  processEnvironment?: NodeJS.ProcessEnv;
+}): Promise<DoctorCheck> {
+  const hostEnvironment = input.processEnvironment || process.env;
+  const dockerImage = input.dockerImage || hostEnvironment.AUTOLABOS_DOCKER_IMAGE?.trim();
+  if (dockerImage) {
+    return await runEphemeralDockerExecutionBoundaryCheck({
+      workspaceRoot: input.workspaceRoot,
+      networkPolicy: input.networkPolicy,
+      dockerExecutable: input.dockerExecutable || "docker",
+      dockerImage,
+      hostEnvironment
+    });
+  }
+  const target = input.dockerTarget || resolveDockerExecTarget(hostEnvironment);
+  const observation = await runDockerCommand(
+    input.dockerExecutable || "docker",
+    ["container", "inspect", target],
+    hostEnvironment
+  );
+  let inspection;
+  try {
+    inspection = parseDockerContainerInspection(observation);
+  } catch (error) {
+    const reason = error instanceof Error ? error.message : "docker_container_inspect_failed";
+    return {
+      name: "docker-execution-boundary",
+      ok: false,
+      status: "fail",
+      detail: `Docker target inspection failed (${reason}).`
+    };
+  }
+  const workspaceRoot = path.resolve(input.workspaceRoot);
+  const request: AciExecutionEnvelopeRequest = {
+    version: 1,
+    envelopeId: "doctor-boundary-probe",
+    runId: "doctor-boundary-probe",
+    phase: "preflight",
+    attempt: 1,
+    executionProfile: "docker",
+    command: "true",
+    commandSha256: "doctor-boundary-probe",
+    workspaceRoot,
+    cwd: workspaceRoot,
+    writableRoots: [workspaceRoot],
+    environmentAllowlist: [],
+    devicePolicy: {
+      kind: "cpu_only",
+      requestedGpuCount: 0,
+      visibleGpuDeviceIds: []
+    },
+    networkPolicy: input.networkPolicy,
+    timeoutMs: 5_000,
+    inputArtifacts: [],
+    dependencyArtifacts: [],
+    expectedOutputs: []
+  };
+  const validation = validateDockerExecutionBoundary(request, inspection, {
+    enforceDevicePolicy: false
+  });
+  return validation.valid
+    ? {
+        name: "docker-execution-boundary",
+        ok: true,
+        status: "ok",
+        detail: "Docker target passed the common execution boundary; exact device exposure is checked per command."
+      }
+    : {
+        name: "docker-execution-boundary",
+        ok: false,
+        status: "fail",
+        detail: `Docker target boundary failed: ${validation.reasonCodes.join(", ")}.`
+      };
+}
+
+async function runEphemeralDockerExecutionBoundaryCheck(input: {
+  workspaceRoot: string;
+  networkPolicy: ExperimentNetworkPolicy;
+  dockerExecutable: string;
+  dockerImage: string;
+  hostEnvironment: NodeJS.ProcessEnv;
+}): Promise<DoctorCheck> {
+  const workspaceRoot = path.resolve(input.workspaceRoot);
+  const request: AciExecutionEnvelopeRequest = {
+    version: 1,
+    envelopeId: "doctor-boundary-probe",
+    runId: "doctor-boundary-probe",
+    phase: "preflight",
+    attempt: 1,
+    executionProfile: "docker",
+    command: "true",
+    commandSha256: "doctor-boundary-probe",
+    workspaceRoot,
+    cwd: workspaceRoot,
+    writableRoots: [path.join(workspaceRoot, ".autolabos", "runs")],
+    environmentAllowlist: [],
+    devicePolicy: {
+      kind: "cpu_only",
+      requestedGpuCount: 0,
+      visibleGpuDeviceIds: []
+    },
+    networkPolicy: input.networkPolicy,
+    timeoutMs: 5_000,
+    inputArtifacts: [],
+    dependencyArtifacts: [],
+    expectedOutputs: []
+  };
+  let plan;
+  try {
+    plan = buildDockerCreateExecutionPlan(request, input.dockerImage, {}, {
+      dockerExecutable: input.dockerExecutable,
+      hostEnvironment: input.hostEnvironment,
+      containerName: "autolabos-doctor-" + process.pid + "-" + Date.now()
+    });
+  } catch (error) {
+    return dockerDoctorFailure(
+      error instanceof Error ? error.message : "docker_container_plan_invalid"
+    );
+  }
+  const create = await runDockerCommand(plan.executable, plan.args, plan.hostEnvironment);
+  if (create.status !== "ok") {
+    return dockerDoctorFailure("docker_container_create_failed");
+  }
+
+  let failureReason: string | undefined;
+  try {
+    const createdInspection = await inspectDockerContainer(
+      plan.executable,
+      plan.containerName,
+      plan.hostEnvironment
+    );
+    const createdValidation = validateDockerExecutionBoundary(request, createdInspection, {
+      expectedState: "stopped"
+    });
+    if (!createdValidation.valid) {
+      failureReason = createdValidation.reasonCodes.join(", ");
+    } else {
+      const start = await runDockerCommand(
+        plan.executable,
+        ["start", "--attach", plan.containerName],
+        plan.hostEnvironment
+      );
+      if (start.status !== "ok") {
+        failureReason = "docker_container_start_failed";
+      } else {
+        const stoppedInspection = await inspectDockerContainer(
+          plan.executable,
+          plan.containerName,
+          plan.hostEnvironment
+        );
+        const stoppedValidation = validateDockerExecutionBoundary(request, stoppedInspection, {
+          expectedState: "stopped"
+        });
+        if (!stoppedValidation.valid) {
+          failureReason = stoppedValidation.reasonCodes.join(", ");
+        } else if (createdValidation.fingerprint !== stoppedValidation.fingerprint) {
+          failureReason = "docker_boundary_changed_during_probe";
+        }
+      }
+    }
+  } catch (error) {
+    failureReason = error instanceof Error ? error.message : "docker_container_inspect_failed";
+  }
+
+  const cleanup = await runDockerCommand(
+    plan.executable,
+    ["container", "rm", "--force", plan.containerName],
+    plan.hostEnvironment
+  );
+  if (cleanup.status !== "ok") {
+    failureReason = failureReason
+      ? failureReason + ", docker_container_cleanup_failed"
+      : "docker_container_cleanup_failed";
+  }
+  return failureReason
+    ? dockerDoctorFailure(failureReason)
+    : {
+        name: "docker-execution-boundary",
+        ok: true,
+        status: "ok",
+        detail: "Docker image passed ephemeral create, boundary, execution, stopped-state, and cleanup checks."
+      };
+}
+
+async function inspectDockerContainer(
+  executable: string,
+  target: string,
+  environment: NodeJS.ProcessEnv
+) {
+  const observation = await runDockerCommand(
+    executable,
+    ["container", "inspect", target],
+    environment
+  );
+  return parseDockerContainerInspection(observation);
+}
+
+function dockerDoctorFailure(reason: string): DoctorCheck {
+  return {
+    name: "docker-execution-boundary",
+    ok: false,
+    status: "fail",
+    detail: "Docker image boundary probe failed (" + reason + ")."
+  };
+}
+
+async function runDockerCommand(
+  executable: string,
+  args: string[],
+  environment: NodeJS.ProcessEnv,
+  timeoutMs = 5_000
+): Promise<AciObservation> {
+  const started = Date.now();
+  return await new Promise<AciObservation>((resolve) => {
+    const child = spawn(executable, args, {
+      env: environment,
+      stdio: ["ignore", "pipe", "pipe"]
+    });
+    let stdout = "";
+    let stderr = "";
+    let settled = false;
+    let timeout: NodeJS.Timeout | undefined;
+    const settle = (code: number | null, reason?: string) => {
+      if (settled) return;
+      settled = true;
+      if (timeout) clearTimeout(timeout);
+      resolve({
+        status: code === 0 ? "ok" : "error",
+        stdout,
+        stderr: [stderr, reason].filter(Boolean).join("\n"),
+        exit_code: code ?? 1,
+        duration_ms: Date.now() - started
+      });
+    };
+    timeout = setTimeout(() => {
+      child.kill("SIGKILL");
+      settle(1, "docker_command_timeout");
+    }, timeoutMs);
+    timeout.unref?.();
+    child.stdout.on("data", (chunk) => {
+      stdout += chunk.toString("utf8");
+    });
+    child.stderr.on("data", (chunk) => {
+      stderr += chunk.toString("utf8");
+    });
+    child.on("error", () => settle(1, "docker_command_failed"));
+    child.on("close", (code) => settle(code));
+  });
+}
+
+function normalizeExecutionApprovalMode(
+  value: DoctorRunOptions["executionApprovalMode"]
+): "manual" | "risk_ack" | "full_auto" {
+  if (value === "risk_ack" || value === "full_auto") {
+    return value;
+  }
+  return "manual";
+}
+
+function normalizeDoctorApprovalMode(
+  value: DoctorRunOptions["approvalMode"]
+): WorkflowApprovalMode {
+  if (value === "manual" || value === "hybrid") {
+    return value;
+  }
+  return "minimal";
+}
+
+function normalizeDoctorNetworkPolicy(
+  value: DoctorRunOptions["networkPolicy"],
+  purpose?: DoctorRunOptions["networkPurpose"]
+): ExperimentNetworkPolicy | undefined {
+  if (value === "blocked" || value === "declared" || value === "required") {
+    return value;
+  }
+  if (purpose) {
+    return "declared";
+  }
+  return undefined;
+}
+
+function normalizeDoctorNetworkPurpose(
+  value: DoctorRunOptions["networkPurpose"]
+): ExperimentNetworkPurpose | undefined {
+  if (
+    value === "logging"
+    || value === "artifact_upload"
+    || value === "model_download"
+    || value === "dataset_fetch"
+    || value === "remote_inference"
+    || value === "other"
+  ) {
+    return value;
+  }
+  return undefined;
+}
+
+function normalizeDependencyMode(
+  value: DoctorRunOptions["dependencyMode"]
+): "local" | "docker" | "remote_gpu" | "plan_only" {
+  if (value === "docker" || value === "remote_gpu" || value === "plan_only") {
+    return value;
+  }
+  return "local";
+}
+
+async function probeWorkspaceWriteability(
+  workspaceRoot: string
+): Promise<{ ok: boolean; probePath: string; detail: string }> {
+  const probeDir = workspaceRoot;
+  const probePath = path.join(probeDir, `.autolabos-doctor-write-probe-${process.pid}.tmp`);
+  try {
+    await fs.mkdir(probeDir, { recursive: true });
+    await fs.writeFile(probePath, "ok\n", "utf8");
+    await fs.rm(probePath, { force: true });
+    return { ok: true, probePath, detail: "write probe succeeded" };
+  } catch (error) {
+    return {
+      ok: false,
+      probePath,
+      detail: error instanceof Error ? error.message : String(error)
+    };
+  }
+}
+
+async function probeRunsDirectoryWriteability(
+  runsDir: string
+): Promise<{ ok: boolean; probePath: string; detail: string }> {
+  const probePath = path.join(runsDir, `.autolabos-doctor-runs-write-probe-${process.pid}.tmp`);
+  try {
+    const stat = await fs.stat(runsDir);
+    if (!stat.isDirectory()) {
+      return { ok: false, probePath, detail: `${runsDir} is not a directory` };
+    }
+    await fs.writeFile(probePath, "ok\n", "utf8");
+    await fs.rm(probePath, { force: true });
+    return { ok: true, probePath, detail: "write probe succeeded" };
+  } catch (error) {
+    return {
+      ok: false,
+      probePath,
+      detail: error instanceof Error ? error.message : String(error)
+    };
+  }
+}
+
+async function directoryExists(dirPath: string): Promise<boolean> {
+  try {
+    const stat = await fs.stat(dirPath);
+    return stat.isDirectory();
+  } catch {
+    return false;
+  }
+}
+
+async function runConfigExistsCheck(configFile: string): Promise<DoctorCheck> {
+  try {
+    await fs.access(configFile);
+    return {
+      name: "workspace-config",
+      ok: true,
+      detail: `Workspace config detected at ${configFile}`
+    };
+  } catch {
+    return {
+      name: "workspace-config",
+      ok: false,
+      detail: "workspace not initialized – run setup first"
+    };
+  }
+}
+
+async function runResearchBriefContractCheck(
+  researchBriefPath: string | undefined,
+  workspaceRoot: string
+): Promise<{
+  check: DoctorCheck;
+  resolvedPath: string;
+  contractReady: boolean;
+  missingSections: string[];
+} | undefined> {
+  if (!researchBriefPath) {
+    return undefined;
+  }
+  const resolvedPath = path.isAbsolute(researchBriefPath)
+    ? researchBriefPath
+    : path.resolve(workspaceRoot, researchBriefPath);
+  try {
+    const markdown = await fs.readFile(resolvedPath, "utf8");
+    const completeness = buildBriefCompletenessArtifact(markdown);
+    const missingSections = completeness.contract_missing_sections.length > 0
+      ? completeness.contract_missing_sections
+      : completeness.missing_sections;
+    const validation = validateResearchBriefMarkdown(markdown);
+    const contractReady = completeness.contract_ready && validation.errors.length === 0;
+    const contractIssues = missingSections.length > 0 ? missingSections : validation.errors;
+    return {
+      resolvedPath,
+      contractReady,
+      missingSections: contractIssues,
+      check: {
+        name: "research-brief-contract",
+        ok: contractReady,
+        detail: contractReady
+          ? `Research brief contract is complete at ${resolvedPath}.`
+          : missingSections.length > 0
+            ? `Research brief contract is missing required section(s): ${missingSections.join(", ")}.`
+            : `Research brief contract is invalid: ${validation.errors.join(" ")}`
+      }
+    };
+  } catch (error) {
+    return {
+      resolvedPath,
+      contractReady: false,
+      missingSections: ["brief file readable"],
+      check: {
+        name: "research-brief-contract",
+        ok: false,
+        detail: `Research brief contract check failed at ${resolvedPath}: ${error instanceof Error ? error.message : String(error)}`
+      }
+    };
+  }
+}
+
+async function runDiskFreeSpaceCheck(workspaceRoot: string): Promise<DoctorCheck> {
+  try {
+    const stats = await fs.statfs(workspaceRoot);
+    const availableBytes = Number(stats.bavail) * Number(stats.bsize);
+    const availableMb = Math.floor(availableBytes / (1024 * 1024));
+    if (availableBytes < MINIMUM_DOCTOR_FREE_SPACE_BYTES) {
+      return {
+        name: "disk-free-space",
+        ok: true,
+        status: "warn",
+        detail: `Low disk space: ${availableMb} MB available (minimum recommended: 500 MB).`
+      };
+    }
+    return {
+      name: "disk-free-space",
+      ok: true,
+      detail: `Disk space looks healthy: ${availableMb} MB available.`
+    };
+  } catch (error) {
+    return {
+      name: "disk-free-space",
+      ok: false,
+      detail: `Could not determine available disk space: ${error instanceof Error ? error.message : String(error)}`
+    };
+  }
+}
+
+export function readCurrentNodeVersion(): string {
+  return process.versions.node;
+}
+
+function runNodeVersionCheck(nodeVersion: string): DoctorCheck {
+  const majorVersion = Number.parseInt(nodeVersion.split(".")[0] || "0", 10);
+  if (!Number.isFinite(majorVersion) || majorVersion < 18) {
+    return {
+      name: "node-version",
+      ok: true,
+      status: "warn",
+      detail: `Node.js ${nodeVersion} detected. Upgrade to Node.js 18 or newer before running research workflows.`
+    };
+  }
+  return {
+    name: "node-version",
+    ok: true,
+    detail: `Node.js ${nodeVersion} detected.`
+  };
+}
+
+export function buildDoctorHighlightLines(report: DoctorReport): string[] {
+  const lines: string[] = [];
+  const profileMark = report.readiness.blocked
+    ? "[ATTN]"
+    : report.readiness.warningChecks.length > 0
+      ? "[WARN]"
+      : "[OK]";
+  const isolationLabel = report.readiness.candidateIsolation || "not-configured";
+  lines.push(
+    `${profileMark} profile: llm=${report.readiness.llmMode || "unknown"}, `
+      + `pdf=${report.readiness.pdfAnalysisMode || "unknown"}, `
+      + `dependency=${report.readiness.dependencyMode}, isolation=${isolationLabel}.`
+  );
+  const networkCheck = report.checks.find((check) => check.name === "experiment-web-restriction");
+  const networkStatus = networkCheck ? getDoctorCheckStatus(networkCheck) : undefined;
+  if (networkStatus === "warning") {
+    if (report.readiness.networkPolicy === "required") {
+      lines.push(
+        `[ATTN] required network dependency: ${report.readiness.networkPurpose || "unspecified"}. ` +
+        "Treat this run as network-assisted and keep explicit operator review in the loop."
+      );
+    } else if (report.readiness.networkPolicy === "declared") {
+      lines.push(
+        `[WARN] declared network dependency: ${report.readiness.networkPurpose || "unspecified"}. ` +
+        "Results should remain auditable as a network-assisted run."
+      );
+    }
+  }
+  const providerFailures = report.readiness.failedChecks.filter((check) =>
+    check === "openai-api-key"
+      || check === "codex-oauth"
+      || check === "codex-chat-provider-compatibility"
+      || check.startsWith("ollama-")
+      || check === "python"
+      || check === "pip"
+      || check === "latex"
+      || check === "pdftotext"
+      || check === "pdfinfo"
+      || check === "pdftoppm"
+  );
+  if (providerFailures.length > 0) {
+    lines.push(`[ATTN] provider/runtime blockers: ${providerFailures.join(", ")}.`);
+  }
+  const degradedChecks = report.readiness.warningChecks.filter((check) => check !== "experiment-web-restriction");
+  if (degradedChecks.length > 0) {
+    lines.push(`[WARN] degraded checks: ${degradedChecks.join(", ")}.`);
+  }
+  const pageBudgetCheck = report.checks.find((check) => check.name === "paper-page-budget");
+  if (pageBudgetCheck) {
+    lines.push(
+      `${pageBudgetCheck.ok ? "[OK]" : "[ATTN]"} paper page budget: ${pageBudgetCheck.detail}`
+    );
+  }
+  const promotionSourceLockCheck = report.checks.find(
+    (check) => check.name === "promotion-source-locks"
+  );
+  if (promotionSourceLockCheck && getDoctorCheckStatus(promotionSourceLockCheck) !== "ok") {
+    lines.push(
+      `${getDoctorCheckStatus(promotionSourceLockCheck) === "fail" ? "[ATTN]" : "[WARN]"} `
+      + `promotion source locks: ${promotionSourceLockCheck.detail}`
+    );
+  }
+  return lines;
+}
+
+async function runPromotionSourceLockCheck(workspaceRoot: string): Promise<DoctorCheck> {
+  const diagnostics = await inspectPromotionSourceLocks(workspaceRoot);
+  if (diagnostics.length === 0) {
+    return {
+      name: "promotion-source-locks",
+      ok: true,
+      detail: "No promotion source locks are present."
+    };
+  }
+
+  const blocking = diagnostics.filter((diagnostic) => diagnostic.status !== "active");
+  const summary = diagnostics.map(formatPromotionSourceLockDiagnostic).join("; ");
+  if (blocking.length > 0) {
+    return {
+      name: "promotion-source-locks",
+      ok: false,
+      detail:
+        `Unsafe promotion source lock state detected: ${summary}. `
+        + "Automatic deletion is disabled; confirm the holder state and resolve the lock manually before promotion."
+    };
+  }
+  return {
+    name: "promotion-source-locks",
+    ok: true,
+    status: "warn",
+    detail:
+      `Promotion source writes are currently serialized by an active lock: ${summary}. `
+      + "Wait for the holder to finish before retrying promotion."
+  };
+}
+
+function formatPromotionSourceLockDiagnostic(
+  diagnostic: PromotionSourceLockDiagnostic
+): string {
+  const fields = [
+    `run=${diagnostic.runId}`,
+    `status=${diagnostic.status}`
+  ];
+  if (diagnostic.pid) fields.push(`pid=${diagnostic.pid}`);
+  if (diagnostic.heartbeatAgeMs !== undefined) {
+    fields.push(`heartbeat_age=${formatDuration(diagnostic.heartbeatAgeMs)}`);
+  }
+  if (diagnostic.acquiredAt) fields.push(`acquired_at=${diagnostic.acquiredAt}`);
+  fields.push(diagnostic.detail);
+  return fields.join(", ");
+}
+
+function formatDuration(durationMs: number): string {
+  if (durationMs < 1000) return `${Math.floor(durationMs)}ms`;
+  if (durationMs < 60_000) return `${Math.floor(durationMs / 1000)}s`;
+  return `${Math.floor(durationMs / 60_000)}m`;
+}
+
+export function parseDoctorCommandArgs(args: string[]): ParsedDoctorCommandArgs {
+  if (args.length === 0) {
+    return { liveProvider: false };
+  }
+  if (args.length === 1 && args[0] === "--live-provider") {
+    return { liveProvider: true };
+  }
+  return {
+    liveProvider: false,
+    error: "Unknown /doctor option. Usage: /doctor [--live-provider]"
+  };
+}
+
+export async function runCodexChatProviderCompatibilityCheck(
+  codex: Pick<CodexNativeClient, "probeChatCompatibility">,
+  opts: NonNullable<DoctorRunOptions["liveProviderProbe"]>
+): Promise<DoctorCheck> {
+  let status: CodexOAuthCompatibilityProbeStatus;
+  try {
+    const result = await codex.probeChatCompatibility({
+      model: opts.model,
+      timeoutMs: opts.timeoutMs,
+      abortSignal: opts.abortSignal
+    });
+    status = isCodexCompatibilityProbeStatus(result.status) ? result.status : "provider_error";
+  } catch {
+    if (opts.abortSignal?.aborted) {
+      throw makeDoctorAbortError();
+    }
+    status = "provider_error";
+  }
+
+  return buildCodexChatProviderCompatibilityCheck(status);
+}
+
+function buildCodexChatProviderCompatibilityCheck(
+  status: CodexOAuthCompatibilityProbeStatus
+): DoctorCheck {
+  const name = "codex-chat-provider-compatibility";
+  if (status === "compatible") {
+    return {
+      name,
+      ok: true,
+      detail: "Live configured Codex chat provider check passed with one fixed compatibility request."
+    };
+  }
+
+  const code = status === "fixture_active"
+    ? "provider_fixture_active"
+    : status === "provider_error"
+      ? "provider_error"
+      : `provider_${status}`;
+  const detailByStatus: Record<Exclude<CodexOAuthCompatibilityProbeStatus, "compatible">, string> = {
+    fixture_active: "A deterministic provider fixture is active, so no live compatibility claim was made.",
+    auth_unavailable: "The configured account binding or authentication was unavailable.",
+    request_rejected: "The provider rejected the configured chat model or request contract.",
+    rate_limited: "The provider rate-limited the single compatibility request; retry later.",
+    timeout: "The single compatibility request exceeded its bounded timeout.",
+    transport_error: "The provider could not be reached by the compatibility request.",
+    empty_response: "The provider accepted the request but returned no usable text.",
+    provider_error: "The provider failed without a safe diagnostic detail."
+  };
+  const blocking = status === "auth_unavailable" || status === "request_rejected" || status === "fixture_active";
+  return {
+    name,
+    ok: !blocking,
+    status: blocking ? "fail" : "warn",
+    detail: `Live configured Codex chat provider check: ${code}. ${detailByStatus[status]}`
+  };
+}
+
+function isCodexCompatibilityProbeStatus(value: unknown): value is CodexOAuthCompatibilityProbeStatus {
+  return value === "compatible"
+    || value === "fixture_active"
+    || value === "auth_unavailable"
+    || value === "request_rejected"
+    || value === "rate_limited"
+    || value === "timeout"
+    || value === "transport_error"
+    || value === "empty_response"
+    || value === "provider_error";
+}
+
+function makeDoctorAbortError(): Error {
+  const error = new Error("Doctor provider compatibility check aborted.");
+  error.name = "AbortError";
+  return error;
+}
+
+function buildCodexModelCheck(name: string, label: string, model: string): DoctorCheck {
+  const normalized = model.trim();
+  if (normalized.toLowerCase().includes("spark")) {
+    return {
+      name,
+      ok: false,
+      detail:
+        `Configured Codex ${label} model ${normalized} is a short-run Spark profile. ` +
+        `Switch ${label} work to ${RECOMMENDED_CODEX_MODEL} before rerank or paper analysis.`
+    };
+  }
+  return {
+    name,
+    ok: true,
+    detail: `Configured Codex ${label} model ${normalized} is suitable for rerank and paper analysis.`
+  };
+}
+
+export function getDoctorCheckStatus(check: { ok: boolean; status?: DoctorCheckStatus }): DoctorCheckStatus {
+  if (check.status === "warn") {
+    return "warning";
+  }
+  return check.status || (check.ok ? "ok" : "fail");
+}
+
+function normalizeDoctorCheck(check: DoctorCheck): DoctorCheck {
+  const status = getDoctorCheckStatus(check);
+  return {
+    ...check,
+    status,
+    ok: status !== "fail",
+    check: check.check || check.name,
+    message: check.message || check.detail
+  };
+}
+
+export function mapDoctorCheckForApi(check: DoctorCheck): DoctorCheck {
+  const normalizedStatus = getDoctorCheckStatus(check);
+  return {
+    ...check,
+    status: normalizedStatus === "warning" ? "warn" : normalizedStatus,
+    ok: normalizedStatus !== "fail",
+    check: check.check || check.name,
+    message: check.message || check.detail
+  };
+}
+
+export function getDoctorAggregateStatus(input: {
+  checks: DoctorCheck[];
+  harness?: HarnessValidationReport;
+}): DoctorAggregateStatus {
+  const mappedChecks = input.checks.map((check) => mapDoctorCheckForApi(check));
+  if (mappedChecks.some((check) => check.status === "fail") || input.harness?.status === "fail") {
+    return "fail";
+  }
+  if (mappedChecks.some((check) => check.status === "warn")) {
+    return "warn";
+  }
+  return "ok";
+}
+
+function resolveExperimentWebRestrictionStatus(input: {
+  webRestrictionRequired: boolean;
+  networkPolicy?: ExperimentNetworkPolicy;
+  networkPurpose?: ExperimentNetworkPurpose;
+  networkDeclarationPresent: boolean;
+  networkApprovalSatisfied: boolean;
+}): DoctorCheckStatus {
+  if (!input.webRestrictionRequired) {
+    return "ok";
+  }
+  if (!input.networkPolicy || input.networkPolicy === "blocked") {
+    return "ok";
+  }
+  if (!input.networkDeclarationPresent || !input.networkPurpose) {
+    return "warning";
+  }
+  if (!input.networkApprovalSatisfied) {
+    return "warning";
+  }
+  return "warning";
+}
+
+function buildExperimentWebRestrictionDetail(input: {
+  webRestrictionRequired: boolean;
+  networkPolicy?: ExperimentNetworkPolicy;
+  networkPurpose?: ExperimentNetworkPurpose;
+  networkDeclarationPresent: boolean;
+  executionApprovalMode: ExecutionApprovalMode;
+}): string {
+  if (!input.webRestrictionRequired) {
+    return "Code execution is not expected to need web restriction.";
+  }
+  if (!input.networkPolicy || input.networkPolicy === "blocked") {
+    return "Code execution is expected and no explicit network dependency is declared.";
+  }
+  if (!input.networkDeclarationPresent || !input.networkPolicy || !input.networkPurpose) {
+    return "Code execution is expected and appears network-assisted, but the run is missing a concrete network_purpose declaration.";
+  }
+  if (input.executionApprovalMode === "full_auto") {
+    return `Code execution declares a ${input.networkPolicy} network dependency for ${input.networkPurpose}; full_auto remains a high-risk mode and should be treated as network-assisted.`;
+  }
+  if (input.networkPolicy === "required") {
+    return `Code execution declares a network-critical dependency for ${input.networkPurpose}; reproducibility caveats and explicit operator review remain required.`;
+  }
+  return `Code execution declares a network dependency for ${input.networkPurpose}; keep the run in manual or risk_ack mode and treat the result as network-assisted.`;
+}
+
+async function loadLatestPaperPageBudgetCheck(workspaceRoot: string): Promise<DoctorCheck | undefined> {
+  const runsFilePath = path.join(workspaceRoot, ".autolabos", "runs", "runs.json");
+  let runsFile: RunsFileSnapshot;
+  try {
+    runsFile = JSON.parse(await fs.readFile(runsFilePath, "utf8")) as RunsFileSnapshot;
+  } catch {
+    return undefined;
+  }
+
+  const latestRun = [...(runsFile.runs || [])]
+    .filter((run) => typeof run.id === "string" && run.id.trim().length > 0)
+    .sort((a, b) => Date.parse(b.updatedAt || "") - Date.parse(a.updatedAt || ""))[0];
+  if (!latestRun?.id) {
+    return undefined;
+  }
+
+  const validationPath = path.join(
+    workspaceRoot,
+    ".autolabos",
+    "runs",
+    latestRun.id,
+    "paper",
+    "compiled_page_validation.json"
+  );
+  let validation: CompiledPageValidationSnapshot;
+  try {
+    validation = JSON.parse(await fs.readFile(validationPath, "utf8")) as CompiledPageValidationSnapshot;
+  } catch {
+    return undefined;
+  }
+
+  const status = validation.status === "pass" ? "pass" : validation.status === "warn" ? "warn" : "fail";
+  const pageCount =
+    typeof validation.compiled_pdf_page_count === "number" ? String(validation.compiled_pdf_page_count) : "unknown";
+  const minimumMainPages = typeof validation.minimum_main_pages === "number"
+    ? String(validation.minimum_main_pages)
+    : typeof validation.main_page_limit === "number"
+      ? String(validation.main_page_limit)
+      : "unknown";
+  const targetMainPages = typeof validation.target_main_pages === "number"
+    ? String(validation.target_main_pages)
+    : typeof validation.main_page_limit === "number"
+      ? String(validation.main_page_limit)
+      : "unknown";
+  return {
+    name: "paper-page-budget",
+    ok: status === "pass",
+    detail:
+      `Latest compiled paper page-budget check for run ${latestRun.id}: ${status}. ` +
+      `pages=${pageCount}, minimum_main_pages=${minimumMainPages}, target_main_pages=${targetMainPages}. ` +
+      `${validation.message || ""}`.trim()
+  };
+}
+
+async function runBinaryCheck(bin: string, args: string[], name: string): Promise<DoctorCheck> {
+  return new Promise((resolve) => {
+    const child = spawn(bin, args, { env: process.env });
+    let stdout = "";
+    let stderr = "";
+
+    child.stdout.on("data", (chunk) => {
+      stdout += chunk.toString("utf8");
+    });
+
+    child.stderr.on("data", (chunk) => {
+      stderr += chunk.toString("utf8");
+    });
+
+    child.once("error", (err) => {
+      resolve({
+        name,
+        ok: false,
+        detail: err.message
+      });
+    });
+
+    child.once("close", (code) => {
+      const out = (stdout || stderr).trim();
+      resolve({
+        name,
+        ok: code === 0,
+        detail: out || `${bin} exited with ${code ?? 1}`
+      });
+    });
+  });
+}
