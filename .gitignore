@@ -44,6 +44,13 @@ pnpm-debug.log*
 output/
 outputs/
 
+# Private research workspaces and operator records
+/studies/
+/docs/research/
+/papers/
+/ISSUES.md
+/TODO.md
+
 # Paper build and reference-resolution caches
 *.aux
 *.bbl
