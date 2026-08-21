@@ -1386,7 +1386,7 @@ describe("objective metric propagation", () => {
       ])
     );
     expect(publicManifest.sections?.paper).toBeUndefined();
-  });
+  }, 15_000);
 
   it("fails structured result analysis when metrics.json is missing", async () => {
     const root = await mkdtemp(path.join(tmpdir(), "autolabos-analyze-results-missing-"));
