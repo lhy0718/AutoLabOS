@@ -5040,6 +5040,14 @@ function renderAppWithResearchFunnel(
     artifact_refs: [],
     integrity_status: "unmeasured",
     ...overrides,
+    venue_viability: overrides.venue_viability ?? {
+      status: "unmeasured",
+      trusted: false,
+      top_tier_ready: false,
+      acceptance_likelihood_assessed: false,
+      reason_codes: [],
+      required_upgrades: []
+    },
     portfolio_candidates: overrides.portfolio_candidates ?? []
   };
   const baseRun = makeWebRun("funnel-run", "Research funnel run");
