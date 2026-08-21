@@ -29,6 +29,10 @@ artifacts.
   index contains no private research path.
 - Study-specific tests and runners stay with the ignored study workspace;
   public tests cover only domain-neutral framework contracts.
+- Public tests must not read ignored private paths; use tracked, domain-neutral
+  fixtures so a clean checkout exercises the same behavior.
+- Before a release or visibility change, run the build and full test suite from
+  a fresh clone that contains no ignored local research artifacts.
 
 ---
 

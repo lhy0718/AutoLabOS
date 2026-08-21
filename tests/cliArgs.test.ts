@@ -365,16 +365,16 @@ describe("resolveCliAction", () => {
   it("supports hash-bound research validation profiles", () => {
     expect(resolveCliAction([
       "research", "run-validation",
-      "--profile", "docs/research/final-validation-profile.json",
+      "--profile", "config/validation-profile.json",
       "--out-dir", "outputs/research-validation-v1"
     ])).toEqual({
       kind: "research-validation-run",
-      profilePath: "docs/research/final-validation-profile.json",
+      profilePath: "config/validation-profile.json",
       outDir: "outputs/research-validation-v1"
     });
     expect(resolveCliAction([
       "research", "run-validation",
-      "--profile", "docs/research/final-validation-profile.json"
+      "--profile", "config/validation-profile.json"
     ])).toMatchObject({
       kind: "error",
       message: expect.stringContaining("--profile")

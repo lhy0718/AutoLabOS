@@ -201,10 +201,7 @@ describe("live-validation continue helper", () => {
       await mkdir(path.dirname(target), { recursive: true });
       await writeFile(
         target,
-        await readFile(
-          path.join(repoRoot, "docs", "research", "budgeted-evaluation-topic-discovery-brief.md"),
-          "utf8"
-        ),
+        await readFile(path.join(repoRoot, "docs", "research-brief-template.md"), "utf8"),
         "utf8"
       );
       try {
