@@ -133,6 +133,7 @@ describe("GitHub workflow dependency security", () => {
       updates?: Array<{
         "package-ecosystem"?: string;
         directory?: string;
+        directories?: string[];
         schedule?: { interval?: string };
         groups?: Record<
           string,
@@ -142,43 +143,55 @@ describe("GitHub workflow dependency security", () => {
             "update-types"?: string[];
           }
         >;
+        ignore?: Array<{
+          "dependency-name"?: string;
+          "update-types"?: string[];
+        }>;
       }>;
     };
-    const findUpdate = (ecosystem: string, directory: string) =>
+    const findDirectoryUpdate = (ecosystem: string, directory: string) =>
       config.updates?.find(
         (update) =>
           update["package-ecosystem"] === ecosystem && update.directory === directory
       );
-    const actionsUpdate = findUpdate("github-actions", "/");
-    const rootNpmUpdate = findUpdate("npm", "/");
-    const webNpmUpdate = findUpdate("npm", "/web");
+    const actionsUpdate = findDirectoryUpdate("github-actions", "/");
+    const npmUpdates = config.updates?.filter(
+      (update) => update["package-ecosystem"] === "npm"
+    );
+    const npmUpdate = npmUpdates?.[0];
 
     expect(config.version).toBe(2);
     expect(actionsUpdate).toMatchObject({
       directory: "/",
       schedule: { interval: "weekly" }
     });
-    expect(rootNpmUpdate).toMatchObject({
-      directory: "/",
+    expect(npmUpdates).toHaveLength(1);
+    expect(npmUpdate).toMatchObject({
+      directories: ["/", "/web"],
       schedule: { interval: "weekly" }
     });
-    expect(rootNpmUpdate?.groups).toEqual({
-      "root-npm-minor-patch": {
+    expect(npmUpdate?.groups).toEqual({
+      "npm-typescript-major": {
+        "applies-to": "version-updates",
+        patterns: ["typescript"],
+        "update-types": ["major"]
+      },
+      "npm-vite-toolchain-major": {
+        "applies-to": "version-updates",
+        patterns: ["vite", "vitest", "@vitejs/plugin-react"],
+        "update-types": ["major"]
+      },
+      "npm-minor-patch": {
         "applies-to": "version-updates",
         patterns: ["*"],
         "update-types": ["minor", "patch"]
       }
     });
-    expect(webNpmUpdate).toMatchObject({
-      directory: "/web",
-      schedule: { interval: "weekly" }
-    });
-    expect(webNpmUpdate?.groups).toEqual({
-      "web-npm-minor-patch": {
-        "applies-to": "version-updates",
-        patterns: ["*"],
-        "update-types": ["minor", "patch"]
+    expect(npmUpdate?.ignore).toEqual([
+      {
+        "dependency-name": "@types/node",
+        "update-types": ["version-update:semver-major"]
       }
-    });
+    ]);
   });
 });

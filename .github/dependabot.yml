@@ -13,7 +13,9 @@ updates:
         patterns:
           - "*"
   - package-ecosystem: "npm"
-    directory: "/"
+    directories:
+      - "/"
+      - "/web"
     schedule:
       interval: "weekly"
       day: "monday"
@@ -21,26 +23,28 @@ updates:
       timezone: "Asia/Seoul"
     open-pull-requests-limit: 5
     groups:
-      root-npm-minor-patch:
+      npm-typescript-major:
+        applies-to: "version-updates"
+        patterns:
+          - "typescript"
+        update-types:
+          - "major"
+      npm-vite-toolchain-major:
+        applies-to: "version-updates"
+        patterns:
+          - "vite"
+          - "vitest"
+          - "@vitejs/plugin-react"
+        update-types:
+          - "major"
+      npm-minor-patch:
         applies-to: "version-updates"
         patterns:
           - "*"
         update-types:
           - "minor"
           - "patch"
-  - package-ecosystem: "npm"
-    directory: "/web"
-    schedule:
-      interval: "weekly"
-      day: "monday"
-      time: "09:30"
-      timezone: "Asia/Seoul"
-    open-pull-requests-limit: 5
-    groups:
-      web-npm-minor-patch:
-        applies-to: "version-updates"
-        patterns:
-          - "*"
+    ignore:
+      - dependency-name: "@types/node"
         update-types:
-          - "minor"
-          - "patch"
+          - "version-update:semver-major"
