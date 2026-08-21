@@ -48,6 +48,61 @@ describe("GitHub workflow dependency security", () => {
     expect(packageJson.scripts?.["web:install"]).toBe("npm --prefix web ci");
   });
 
+  it("tests every supported Node release line in CI", async () => {
+    const packageJson = JSON.parse(
+      await readFile(path.join(repoRoot, "package.json"), "utf8")
+    ) as { engines?: { node?: string } };
+    const packageLock = JSON.parse(
+      await readFile(path.join(repoRoot, "package-lock.json"), "utf8")
+    ) as { packages?: { ""?: { engines?: { node?: string } } } };
+    const readme = await readFile(path.join(repoRoot, "README.md"), "utf8");
+    const workflow = YAML.parse(
+      await readFile(path.join(repoRoot, ".github", "workflows", "ci.yml"), "utf8")
+    ) as {
+      jobs?: {
+        "build-and-test"?: {
+          steps?: Array<{
+            name?: string;
+            with?: { "node-version"?: string };
+          }>;
+        };
+        "node-compatibility"?: {
+          strategy?: {
+            "fail-fast"?: boolean;
+            matrix?: { "node-version"?: string[] };
+          };
+          steps?: Array<{
+            name?: string;
+            run?: string;
+            with?: { "node-version"?: string };
+          }>;
+        };
+      };
+    };
+    const primarySetup = workflow.jobs?.["build-and-test"]?.steps?.find(
+      (step) => step.name === "Setup Node"
+    );
+    const compatibility = workflow.jobs?.["node-compatibility"];
+    const compatibilitySetup = compatibility?.steps?.find(
+      (step) => step.name === "Setup Node"
+    );
+
+    expect(packageJson.engines?.node).toBe("22.x || 24.x || 26.x");
+    expect(packageLock.packages?.[""]?.engines?.node).toBe(packageJson.engines?.node);
+    expect(readme).toContain("Node-22.x%20%7C%2024.x%20%7C%2026.x");
+    expect(primarySetup?.with?.["node-version"]).toBe("22");
+    expect(compatibility?.strategy).toEqual({
+      "fail-fast": false,
+      matrix: { "node-version": ["24", "26"] }
+    });
+    expect(compatibilitySetup?.with?.["node-version"]).toBe("${{ matrix.node-version }}");
+    expect(compatibility?.steps?.map((step) => step.run).filter(Boolean)).toEqual([
+      "npm ci",
+      "npm run build",
+      "npm test"
+    ]);
+  });
+
   it("validates the harness with an ephemeral domain-neutral issue log", async () => {
     const workflow = YAML.parse(
       await readFile(path.join(repoRoot, ".github", "workflows", "ci.yml"), "utf8")

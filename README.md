@@ -45,8 +45,8 @@
 
   <p>
     <img alt="TypeScript" src="https://img.shields.io/badge/TypeScript-5.x-3178C6?style=flat-square&logo=typescript&logoColor=white" />
-    <img alt="Node" src="https://img.shields.io/badge/Node-20.x%20%7C%2022--25.x-339933?style=flat-square&logo=node.js&logoColor=white" />
-    <img alt="React" src="https://img.shields.io/badge/React-18-61DAFB?style=flat-square&logo=react&logoColor=black" />
+    <img alt="Node" src="https://img.shields.io/badge/Node-22.x%20%7C%2024.x%20%7C%2026.x-339933?style=flat-square&logo=node.js&logoColor=white" />
+    <img alt="React" src="https://img.shields.io/badge/React-19-61DAFB?style=flat-square&logo=react&logoColor=black" />
   </p>
 
   <p>
@@ -287,6 +287,7 @@ results, abstracts, and agent agreement cannot close the residual-claim gate.
 
 | Item | When needed | Notes |
 |---|---|---|
+| Node.js 22, 24, or 26 | Required | Supported release lines are enforced by the package engine and CI compatibility matrix |
 | `SEMANTIC_SCHOLAR_API_KEY` | Recommended | Higher-capacity Semantic Scholar discovery and metadata access |
 | `OPENALEX_API_KEY` | Recommended | Authenticated OpenAlex discovery; avoids unauthenticated rate limits |
 | `OPENAI_API_KEY` | When provider is `api` | OpenAI API model execution |
