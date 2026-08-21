@@ -99,6 +99,7 @@ describe("GitHub workflow dependency security", () => {
     expect(compatibility?.steps?.map((step) => step.run).filter(Boolean)).toEqual([
       "npm ci",
       "npm run build",
+      "npm run typecheck:ts7-native",
       "npm test"
     ]);
   });

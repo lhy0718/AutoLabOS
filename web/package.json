@@ -6,8 +6,9 @@
     "build": "vite build",
     "dev": "vite build --watch",
     "test": "vitest run",
-    "typecheck": "tsc -p tsconfig.json --noEmit",
-    "typecheck:ts7-bridge": "tsc -p tsconfig.json --noEmit --stableTypeOrdering"
+    "typecheck": "node ./node_modules/typescript/bin/tsc -p tsconfig.json --noEmit",
+    "typecheck:ts7-bridge": "node ./node_modules/typescript/bin/tsc -p tsconfig.json --noEmit --stableTypeOrdering",
+    "typecheck:ts7-native": "node ./node_modules/@typescript/native/bin/tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
     "@phosphor-icons/react": "^2.1.10",
@@ -19,6 +20,7 @@
     "@testing-library/react": "^16.1.0",
     "@types/react": "^19.2.18",
     "@types/react-dom": "^19.2.4",
+    "@typescript/native": "npm:typescript@^7.0.2",
     "@vitejs/plugin-react": "^6.1.0",
     "jsdom": "^26.0.0",
     "typescript": "^6.0.3",
