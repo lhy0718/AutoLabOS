@@ -40,6 +40,28 @@ describe("GitHub workflow dependency security", () => {
     expect(ciSource).toContain("run: npm run audit:security");
   });
 
+  it("validates the harness with an ephemeral domain-neutral issue log", async () => {
+    const workflow = YAML.parse(
+      await readFile(path.join(repoRoot, ".github", "workflows", "ci.yml"), "utf8")
+    ) as {
+      jobs?: {
+        "build-and-test"?: {
+          steps?: Array<{ name?: string; run?: string }>;
+        };
+      };
+    };
+    const step = workflow.jobs?.["build-and-test"]?.steps?.find(
+      (candidate) => candidate.name === "Validate harness records"
+    );
+    const run = step?.run || "";
+
+    expect(run).toContain("writeFileSync('ISSUES.md'");
+    expect(run).toContain("## Active issues");
+    expect(run).toContain("none");
+    expect(run).toContain("npm run validate:harness");
+    expect(run.indexOf("writeFileSync")).toBeLessThan(run.indexOf("npm run validate:harness"));
+  });
+
   it("keeps Dependabot enabled for GitHub Actions and npm updates", async () => {
     const config = YAML.parse(
       await readFile(path.join(repoRoot, ".github", "dependabot.yml"), "utf8")
