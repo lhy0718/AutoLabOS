@@ -40,6 +40,14 @@ describe("GitHub workflow dependency security", () => {
     expect(ciSource).toContain("run: npm run audit:security");
   });
 
+  it("installs web dependencies without rewriting the lockfile", async () => {
+    const packageJson = JSON.parse(
+      await readFile(path.join(repoRoot, "package.json"), "utf8")
+    ) as { scripts?: Record<string, string> };
+
+    expect(packageJson.scripts?.["web:install"]).toBe("npm --prefix web ci");
+  });
+
   it("validates the harness with an ephemeral domain-neutral issue log", async () => {
     const workflow = YAML.parse(
       await readFile(path.join(repoRoot, ".github", "workflows", "ci.yml"), "utf8")
@@ -71,6 +79,14 @@ describe("GitHub workflow dependency security", () => {
         "package-ecosystem"?: string;
         directory?: string;
         schedule?: { interval?: string };
+        groups?: Record<
+          string,
+          {
+            "applies-to"?: string;
+            patterns?: string[];
+            "update-types"?: string[];
+          }
+        >;
       }>;
     };
     const findUpdate = (ecosystem: string, directory: string) =>
@@ -91,9 +107,23 @@ describe("GitHub workflow dependency security", () => {
       directory: "/",
       schedule: { interval: "weekly" }
     });
+    expect(rootNpmUpdate?.groups).toEqual({
+      "root-npm-minor-patch": {
+        "applies-to": "version-updates",
+        patterns: ["*"],
+        "update-types": ["minor", "patch"]
+      }
+    });
     expect(webNpmUpdate).toMatchObject({
       directory: "/web",
       schedule: { interval: "weekly" }
+    });
+    expect(webNpmUpdate?.groups).toEqual({
+      "web-npm-minor-patch": {
+        "applies-to": "version-updates",
+        patterns: ["*"],
+        "update-types": ["minor", "patch"]
+      }
     });
   });
 });

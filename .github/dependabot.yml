@@ -21,9 +21,13 @@ updates:
       timezone: "Asia/Seoul"
     open-pull-requests-limit: 5
     groups:
-      root-npm-dependencies:
+      root-npm-minor-patch:
+        applies-to: "version-updates"
         patterns:
           - "*"
+        update-types:
+          - "minor"
+          - "patch"
   - package-ecosystem: "npm"
     directory: "/web"
     schedule:
@@ -33,6 +37,10 @@ updates:
       timezone: "Asia/Seoul"
     open-pull-requests-limit: 5
     groups:
-      web-npm-dependencies:
+      web-npm-minor-patch:
+        applies-to: "version-updates"
         patterns:
           - "*"
+        update-types:
+          - "minor"
+          - "patch"
