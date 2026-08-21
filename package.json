@@ -104,17 +104,17 @@
     "node": "20.x || 22.x || 23.x || 24.x || 25.x"
   },
   "dependencies": {
-    "better-sqlite3": "^12.8.0",
-    "cheerio": "~1.0.0",
-    "yaml": "^2.8.1"
+    "better-sqlite3": "^13.0.3",
+    "cheerio": "~1.2.0",
+    "yaml": "^2.9.0"
   },
   "devDependencies": {
-    "@types/better-sqlite3": "^7.6.13",
-    "@types/node": "^22.13.14",
-    "tsx": "^4.20.3",
-    "typescript": "^5.8.2",
-    "vite": "^6.4.3",
-    "vitest": "^3.2.7"
+    "@types/better-sqlite3": "^9.6.0",
+    "@types/node": "^26.2.0",
+    "tsx": "^4.23.12",
+    "typescript": "^7.0.2",
+    "vite": "^8.2.1",
+    "vitest": "^4.1.10"
   },
   "allowScripts": {
     "better-sqlite3@12.8.0": true,
