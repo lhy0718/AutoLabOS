@@ -17,14 +17,13 @@
     "@testing-library/react": "^16.1.0",
     "@types/react": "^19.2.18",
     "@types/react-dom": "^19.2.4",
-    "@vitejs/plugin-react": "^4.7.0",
+    "@vitejs/plugin-react": "^6.1.0",
     "jsdom": "^26.0.0",
     "typescript": "^5.8.2",
-    "vite": "^6.4.3",
-    "vitest": "^3.2.7"
+    "vite": "^8.2.2",
+    "vitest": "^4.1.11"
   },
   "allowScripts": {
-    "esbuild@0.25.12": true,
     "fsevents@2.3.3": true
   }
 }
