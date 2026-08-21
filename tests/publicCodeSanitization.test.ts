@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import fs from "node:fs";
+import { execFileSync } from "node:child_process";
 import path from "node:path";
 
 import { isReproducibleSourceEntry } from "../src/utils/reproducibleSource.js";
@@ -13,7 +14,6 @@ const PUBLIC_DIRS = [
   "tests",
   "docs",
   "scripts",
-  "papers",
   "benchmarks",
   "node-prompts",
   "plugins",
@@ -40,6 +40,8 @@ const TEXT_EXTENSIONS = new Set([
 ]);
 const ROOT_TEXT_FILENAMES = new Set([".gitattributes", ".gitignore"]);
 const HISTORICAL_AUDIT_FILES = new Set(["ISSUES.md"]);
+const PRIVATE_RESEARCH_PREFIXES = ["studies/", "docs/research/", "papers/"];
+const PRIVATE_RESEARCH_FILES = new Set(["ISSUES.md", "TODO.md"]);
 
 function walkTextFiles(dir: string): string[] {
   const absolute = path.join(ROOT, dir);
@@ -158,13 +160,35 @@ function collectExperimentSpecificEntrypoints(
 }
 
 describe("public code sanitization", () => {
-  it("keeps study-specific verification outside the framework test tree", () => {
+  it("keeps private research artifacts out of the Git index", () => {
+    const tracked = execFileSync("git", ["ls-files", "-z"], {
+      cwd: ROOT,
+      encoding: "utf8"
+    }).split("\0").filter(Boolean);
+    const offenders = tracked.filter((relativePath) =>
+      PRIVATE_RESEARCH_FILES.has(relativePath)
+      || PRIVATE_RESEARCH_PREFIXES.some((prefix) => relativePath.startsWith(prefix))
+    );
+
+    expect(offenders).toEqual([]);
+  });
+
+  it("keeps framework tests independent from private research workspaces", () => {
+    const intentionalBoundaryTests = new Set([
+      SANITIZER_TEST_PATH,
+      path.join("tests", "publicSourceSnapshot.test.ts")
+    ]);
     const frameworkTests = walkTextFiles("tests").filter(
-      (relativePath) => relativePath !== SANITIZER_TEST_PATH
+      (relativePath) => !intentionalBoundaryTests.has(relativePath)
     );
     const offenders = frameworkTests.filter((relativePath) => {
       const source = fs.readFileSync(path.join(ROOT, relativePath), "utf8");
-      return /(?:^|[("'`/\\])studies(?:[)"'`/\\]|$)/mu.test(source);
+      const literalPrivatePath = /(?:^|[("'`/\\])(?:studies|papers|docs[\\/]research)[\\/]/mu;
+      const joinedPrivateRoot = /path\.join\([\s\S]{0,160}?["'`](?:studies|papers)["'`]/mu;
+      const joinedResearchRoot = /path\.join\([\s\S]{0,160}?["'`]docs["'`]\s*,\s*["'`]research["'`]/mu;
+      return literalPrivatePath.test(source)
+        || joinedPrivateRoot.test(source)
+        || joinedResearchRoot.test(source);
     });
 
     expect(offenders).toEqual([]);

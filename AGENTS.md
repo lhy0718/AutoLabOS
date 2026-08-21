@@ -12,6 +12,28 @@ Always prioritize:
 4. Honest scientific writing that does not exceed the evidence
 5. Review-gated progression instead of appearance-driven completion
 
+## Public / Private Boundary
+
+The GitHub repository contains only the reusable AutoLabOS engine, generic
+documentation, and domain-neutral fixtures. Concrete research topics,
+literature portfolios, study contracts, experimental data or results,
+manuscripts, reviewer packets, and operator research logs are private local
+artifacts.
+
+- Keep private research under the ignored local study, research-document,
+  paper, issue-log, and todo paths declared in the repository gitignore.
+- Never stage, commit, package, or export those paths.
+- Do not copy private research identifiers or findings into public source,
+  tests, examples, documentation, release notes, or snapshot manifests.
+- Before every commit, push, release, or public snapshot, verify that the Git
+  index contains no private research path.
+- Study-specific tests and runners stay with the ignored study workspace;
+  public tests cover only domain-neutral framework contracts.
+- Public tests must not read ignored private paths; use tracked, domain-neutral
+  fixtures so a clean checkout exercises the same behavior.
+- Before a release or visibility change, run the build and full test suite from
+  a fresh clone that contains no ignored local research artifacts.
+
 ---
 
 ## Source of Truth
